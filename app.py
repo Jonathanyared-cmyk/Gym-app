@@ -1,7 +1,7 @@
 """
-Gym Log – Apple-Health-Look (Hell/Dunkel), Training & Körperdaten
+Gym Log – Apple-Health-Look (Hell/Dunkel) für iPhone & PC
 Start:   streamlit run app.py
-Bilder:  Ordner "bilder" neben dieser Datei, z. B. bilder/brustpresse.jpg
+Ordner:  bilder/   -> Maschinenfotos + plus.svg, minus.svg, dumbbell.svg
 Daten:   trainingsdaten.csv, weight_data.csv, einstellungen.json (werden automatisch angelegt)
 Braucht: streamlit >= 1.45 (siehe requirements.txt)
 """
@@ -10,12 +10,14 @@ import base64
 import html
 import json
 import re
+import tempfile
 import unicodedata
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 # ===============================================================
 # 1) TRAININGSPLAN
@@ -47,12 +49,8 @@ ALLE_UEBUNGEN = [dict(uebung, gruppe=block["gruppe"])
 UEBUNG_NACH_NAME = {uebung["name"]: uebung for uebung in ALLE_UEBUNGEN}
 GRUPPEN = [block["gruppe"] for block in TRAININGSPLAN]
 
-# Aktivitätsfaktor (PAL) für den Kalorien-Gesamtbedarf
-AKTIVITAETS_STUFEN = {"Wenig": 1.2, "Leicht": 1.375, "Mittel": 1.55, "Hoch": 1.725}
-AKTIVITAETS_TEXT = {
-    "Wenig": "Bürojob, kaum Sport", "Leicht": "1–2× Training pro Woche",
-    "Mittel": "3–5× Training pro Woche", "Hoch": "6–7× Training pro Woche",
-}
+# PAL-Faktor (Aktivität) – Standard: "Sehr aktiv" = 1,75
+PAL_STUFEN = {"Wenig": 1.2, "Leicht": 1.375, "Mittel": 1.55, "Sehr aktiv": 1.75}
 
 # ===============================================================
 # 2) DATEIEN
@@ -67,9 +65,7 @@ GEWICHT_SPALTEN = ["Datum", "Uhrzeit", "Gewicht_kg"]
 BILD_ENDUNGEN = {".jpg": "jpeg", ".jpeg": "jpeg", ".png": "png", ".webp": "webp"}
 
 # Annahmen für den ersten Start – danach merkt sich die App deine Werte
-STANDARD_EINSTELLUNGEN = {
-    "light_mode": False, "alter": 25, "groesse": 178, "geschlecht": "Männlich", "aktivitaet": "Mittel",
-}
+STANDARD_EINSTELLUNGEN = {"light_mode": False, "alter": 25, "groesse": 178, "pal_stufe": "Sehr aktiv"}
 
 st.set_page_config(page_title="Gym Log", page_icon="🏋️", layout="centered",
                    initial_sidebar_state="collapsed")
@@ -85,8 +81,8 @@ def einstellungen_laden() -> None:
             gespeichert = json.loads(EINSTELLUNGEN_DATEI.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             gespeichert = {}
-    if gespeichert.get("aktivitaet") not in AKTIVITAETS_STUFEN:   # alte Langnamen abfangen
-        gespeichert.pop("aktivitaet", None)
+    if gespeichert.get("pal_stufe") not in PAL_STUFEN:
+        gespeichert.pop("pal_stufe", None)
     for schluessel, standardwert in STANDARD_EINSTELLUNGEN.items():
         if schluessel not in st.session_state:
             st.session_state[schluessel] = gespeichert.get(schluessel, standardwert)
@@ -97,15 +93,14 @@ def einstellungen_speichern() -> None:
     try:
         EINSTELLUNGEN_DATEI.write_text(json.dumps(werte, ensure_ascii=False, indent=2), encoding="utf-8")
     except OSError:
-        pass   # z. B. schreibgeschützte Cloud – dann gilt die Einstellung nur für diese Sitzung
+        pass   # z. B. schreibgeschützt – dann gilt die Einstellung nur für diese Sitzung
 
 
 einstellungen_laden()
 
+
 # ===============================================================
-# 4a) ICONS (SF Symbols aus dem Ordner "bilder")
-#     Werden als CSS-Maske genutzt -> färben sich automatisch passend zu Hell/Dunkel.
-#     Fehlt eine Datei, springt ein schlichtes Ersatz-Icon ein.
+# 4) ICONS (SF Symbols aus "bilder") – Ersatz-Icons, falls eine Datei fehlt
 # ===============================================================
 ERSATZ_ICONS = {
     "plus": '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">'
@@ -119,8 +114,8 @@ ERSATZ_ICONS = {
 }
 
 
-def icon_ordner():
-    """Ordner 'bilder' (oder 'Bilder') neben app.py."""
+def bilder_ordner_finden():
+    """Ordner 'bilder' neben app.py – auch als 'Bilder' (Linux/Cloud unterscheidet Groß/Klein)."""
     if BILDER_ORDNER.is_dir():
         return BILDER_ORDNER
     for ordner in APP_ORDNER.iterdir():
@@ -131,8 +126,7 @@ def icon_ordner():
 
 @st.cache_data
 def icon_als_data_uri(icon_name: str) -> str:
-    """Liest bilder/<icon_name>.svg und gibt es als data:-URI für CSS zurück."""
-    ordner = icon_ordner()
+    ordner = bilder_ordner_finden()
     svg_text = ERSATZ_ICONS[icon_name]
     if ordner is not None:
         for datei in ordner.iterdir():
@@ -148,37 +142,203 @@ ICON_HANTEL = icon_als_data_uri("dumbbell")
 
 
 def icon_html(data_uri: str, klasse: str = "icon") -> str:
-    """Kleines Icon in der aktuellen Textfarbe (für HTML-Kacheln)."""
     return f'<span class="{klasse}" style="--icon: url(\'{data_uri}\')" aria-hidden="true"></span>'
 
 
 # ===============================================================
-# 4b) DESIGN: Farbpaletten + CSS
+# 5) FARBEN
 # ===============================================================
 FARBEN_DUNKEL = {
-    "bg": "#000000", "karte": "#1C1C1E", "feld": "#2C2C2E", "linie": "#2C2C2E",
-    "segment": "#1C1C1E", "segment_an": "#636366",
-    "text": "#FFFFFF", "grau": "#8E8E93", "schatten": "none",
+    "bg": "#000000", "karte": "#1C1C1E", "feld": "#2C2C2E", "linie": "#38383A",
+    "segment": "#2C2C2E", "segment_an": "#636366", "text": "#FFFFFF", "grau": "#8E8E93",
+    "schatten": "none",
 }
 FARBEN_HELL = {
     "bg": "#F2F2F7", "karte": "#FFFFFF", "feld": "#F2F2F7", "linie": "#E5E5EA",
-    "segment": "#E3E3E8", "segment_an": "#FFFFFF",
-    "text": "#000000", "grau": "#6C6C70",
+    "segment": "#EEEEF0", "segment_an": "#FFFFFF", "text": "#000000", "grau": "#6C6C70",
     "schatten": "0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04)",
 }
 AKZENT = "#FF2D55"
 farben = FARBEN_HELL if st.session_state["light_mode"] else FARBEN_DUNKEL
+KOMPONENTEN_FARBEN = {k: farben[k] for k in ("text", "grau", "feld", "linie")}
 
+
+# ===============================================================
+# 6) iOS-EINGABE-KOMPONENTE (Stepper + Scrollrad)
+#    Eigenes kleines HTML-Bauteil: Flexbox hält −, Zahl, + garantiert in einer Zeile,
+#    und ein natives <select> öffnet auf dem iPhone das echte iOS-Scrollrad.
+# ===============================================================
+KOMPONENTEN_HTML = r"""<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased; }
+  * { box-sizing: border-box; }
+  button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; font: inherit; }
+
+  /* Stepper: −  Wert  +  (immer eine Zeile) */
+  .stepper { display: flex; flex-direction: row; flex-wrap: nowrap; align-items: center;
+             justify-content: space-between; gap: 12px; height: 84px; }
+  .rund { flex: 0 0 56px; width: 56px; height: 56px; padding: 0; border: none; border-radius: 50%;
+          background: var(--feld); display: grid; place-items: center; cursor: pointer;
+          transition: transform .1s ease, opacity .15s ease; }
+  .rund:active { transform: scale(.92); }
+  .rund:disabled { opacity: .35; cursor: default; }
+  .rund i { width: 22px; height: 22px; background: var(--text);
+            -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat; }
+  .wert { flex: 1 1 auto; min-width: 0; text-align: center; line-height: 1.1; }
+  .wert span { display: block; color: var(--grau); font-size: 13px; margin-bottom: 2px; }
+  .wert b { color: var(--text); font-size: 36px; font-weight: 600; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .wert small { color: var(--grau); font-size: 15px; font-weight: 500; margin-left: 4px; }
+
+  /* Scrollrad-Zeilen wie in den iOS-Einstellungen */
+  .zeile { position: relative; display: flex; align-items: center; justify-content: space-between;
+           height: 52px; border-bottom: 1px solid var(--linie); }
+  .zeile:last-child { border-bottom: none; }
+  .zeile label { color: var(--text); font-size: 17px; }
+  .pille { color: var(--text); background: var(--feld); border-radius: 8px; padding: 6px 12px;
+           font-size: 17px; font-variant-numeric: tabular-nums; }
+  .zeile select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer;
+                  font-size: 16px; -webkit-appearance: none; appearance: none; }
+</style></head>
+<body><div id="app"></div>
+<script>
+  const senden = (type, daten) =>
+    window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type }, daten || {}), "*");
+  const hoeheMelden = () => senden("streamlit:setFrameHeight", { height: document.body.scrollHeight });
+  const zahlFormat = (w, n) => (n > 0 ? w.toFixed(n) : String(Math.round(w * 100) / 100)).replace(".", ",");
+
+  let args = null, wert = null, werte = {}, letzterToken = null, gebaut = false;
+
+  function stepperAnzeigen() {
+    document.getElementById("zahl").textContent = zahlFormat(wert, args.nachkomma);
+    document.getElementById("einheit").textContent = args.einheit;
+    document.getElementById("label").textContent = args.label;
+    document.getElementById("minus").disabled = wert <= args.min;
+    document.getElementById("plus").disabled = wert >= args.max;
+  }
+  function stepperAendern(richtung) {
+    let neu = Math.round((wert + richtung * args.schritt) * 100) / 100;
+    wert = Math.min(args.max, Math.max(args.min, neu));
+    stepperAnzeigen();
+    senden("streamlit:setComponentValue", { value: { wert: wert, token: letzterToken }, dataType: "json" });
+  }
+  function stepperRendern() {
+    if (args.token !== letzterToken) { wert = args.wert; letzterToken = args.token; }
+    if (!gebaut) {
+      document.getElementById("app").innerHTML =
+        '<div class="stepper">' +
+        '<button class="rund" id="minus" aria-label="Weniger"><i style="--icon:url(\'' + args.icon_minus + '\')"></i></button>' +
+        '<div class="wert"><span id="label"></span><b id="zahl"></b><small id="einheit"></small></div>' +
+        '<button class="rund" id="plus" aria-label="Mehr"><i style="--icon:url(\'' + args.icon_plus + '\')"></i></button>' +
+        '</div>';
+      document.getElementById("minus").onclick = () => stepperAendern(-1);
+      document.getElementById("plus").onclick = () => stepperAendern(1);
+      gebaut = true;
+    }
+    stepperAnzeigen();
+  }
+
+  function walzenRendern() {
+    if (args.token !== letzterToken) {
+      args.felder.forEach(f => { werte[f.key] = f.wert; });
+      letzterToken = args.token;
+    }
+    if (!gebaut) {
+      document.getElementById("app").innerHTML = args.felder.map((f, i) => {
+        let optionen = "";
+        for (let v = f.min; v <= f.max; v++) optionen += '<option value="' + v + '">' + v + ' ' + f.einheit + '</option>';
+        return '<div class="zeile"><label for="walze' + i + '">' + f.label + '</label>' +
+               '<span class="pille" id="pille' + i + '"></span>' +
+               '<select id="walze' + i + '" aria-label="' + f.label + '">' + optionen + '</select></div>';
+      }).join("");
+      args.felder.forEach((f, i) => {
+        document.getElementById("walze" + i).onchange = (e) => {
+          werte[f.key] = Number(e.target.value);
+          walzenAnzeigen();
+          senden("streamlit:setComponentValue", { value: { werte: werte, token: letzterToken }, dataType: "json" });
+        };
+      });
+      gebaut = true;
+    }
+    walzenAnzeigen();
+  }
+  function walzenAnzeigen() {
+    args.felder.forEach((f, i) => {
+      document.getElementById("walze" + i).value = String(werte[f.key]);
+      document.getElementById("pille" + i).textContent = werte[f.key] + " " + f.einheit;
+    });
+  }
+
+  window.addEventListener("message", (e) => {
+    const d = e.data;
+    if (!d || d.type !== "streamlit:render") return;
+    args = d.args;
+    for (const k in args.farben) document.documentElement.style.setProperty("--" + k, args.farben[k]);
+    if (args.art === "stepper") stepperRendern(); else walzenRendern();
+    hoeheMelden();
+  });
+  senden("streamlit:componentReady", { apiVersion: 1 });
+</script></body></html>
+"""
+
+
+def ios_komponente_anlegen():
+    """Schreibt das HTML-Bauteil in einen Temp-Ordner und meldet es bei Streamlit an."""
+    ordner = Path(tempfile.gettempdir()) / "gymlog_ios_eingabe"
+    ordner.mkdir(parents=True, exist_ok=True)
+    datei = ordner / "index.html"
+    if not datei.exists() or datei.read_text(encoding="utf-8") != KOMPONENTEN_HTML:
+        datei.write_text(KOMPONENTEN_HTML, encoding="utf-8")
+    return components.declare_component("gymlog_ios_eingabe", path=str(ordner))
+
+
+ios_eingabe = ios_komponente_anlegen()
+
+
+def stepper_wert_uebernehmen(feld: str) -> None:
+    """Übernimmt den zuletzt getippten Stepper-Wert – aber nur, wenn er zur aktuellen Übung gehört."""
+    antwort = st.session_state.get(f"stepper_{feld}")
+    if isinstance(antwort, dict) and antwort.get("token") == st.session_state.get(f"{feld}_token", 0):
+        st.session_state[feld] = antwort["wert"]
+
+
+def wert_von_aussen_setzen(feld: str, wert: float) -> None:
+    """Setzt einen Stepper-Wert aus Python (z. B. neue Übung) und macht alte Eingaben ungültig."""
+    st.session_state[feld] = wert
+    st.session_state[f"{feld}_token"] = st.session_state.get(f"{feld}_token", 0) + 1
+
+
+def stepper(feld: str, beschriftung: str, einheit: str, schritt: float,
+            minimum: float, maximum: float, nachkomma: int = 0) -> None:
+    ios_eingabe(art="stepper", wert=float(st.session_state[feld]), schritt=schritt, min=minimum, max=maximum,
+                nachkomma=nachkomma, einheit=einheit, label=beschriftung,
+                token=st.session_state.get(f"{feld}_token", 0), farben=KOMPONENTEN_FARBEN,
+                icon_plus=ICON_PLUS, icon_minus=ICON_MINUS, key=f"stepper_{feld}", default=None)
+
+
+def koerperangaben_uebernehmen() -> None:
+    antwort = st.session_state.get("walzen_koerper")
+    if isinstance(antwort, dict) and "werte" in antwort:
+        neu_alter, neu_groesse = int(antwort["werte"]["alter"]), int(antwort["werte"]["groesse"])
+        if (neu_alter, neu_groesse) != (st.session_state["alter"], st.session_state["groesse"]):
+            st.session_state["alter"], st.session_state["groesse"] = neu_alter, neu_groesse
+            einstellungen_speichern()
+
+
+# ===============================================================
+# 7) CSS
+# ===============================================================
 DESIGN_CSS = f"""
 <style>
 :root {{
     --bg: {farben["bg"]}; --karte: {farben["karte"]}; --feld: {farben["feld"]}; --linie: {farben["linie"]};
     --segment: {farben["segment"]}; --segment-an: {farben["segment_an"]};
-    --text: {farben["text"]}; --grau: {farben["grau"]}; --schatten: {farben["schatten"]};
-    --akzent: {AKZENT};
+    --text: {farben["text"]}; --grau: {farben["grau"]}; --schatten: {farben["schatten"]}; --akzent: {AKZENT};
 }}
 
-/* ---------- Grundgerüst ---------- */
+/* ---------- Grundgerüst & Streamlit ausblenden ---------- */
 html, body, .stApp, .stApp * {{
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
                  "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif !important;
@@ -187,39 +347,45 @@ html, body, .stApp, .stApp * {{
 #MainMenu, header, footer {{ visibility: hidden; height: 0; }}
 [data-testid="stToolbar"], [data-testid="stDecoration"], [data-testid="stStatusWidget"],
 [data-testid="stSidebar"], [data-testid="collapsedControl"], [data-testid="stHeader"] {{ display: none !important; }}
-
 .stApp {{ background: var(--bg); }}
 .stApp p, .stApp span, .stApp div, .stApp label {{ color: var(--text); }}
 .block-container {{ max-width: 520px; padding: 12px 16px 64px !important; }}
-[data-testid="stVerticalBlock"] {{ gap: 14px; }}
+[data-testid="stVerticalBlock"] {{ gap: 16px; }}
+iframe {{ border: none; display: block; }}
 button {{ touch-action: manipulation; -webkit-tap-highlight-color: transparent; }}
 
 /* ---------- Kopf ---------- */
 .datum {{ color: var(--grau) !important; font-size: 13px; font-weight: 600; letter-spacing: .04em;
           text-transform: uppercase; margin: 0; }}
 .titel {{ font-size: 34px; font-weight: 700; letter-spacing: -.025em; margin: 0; line-height: 1.15; }}
-.abschnitt {{ font-size: 20px; font-weight: 700; letter-spacing: -.01em; margin: 18px 4px 0; }}
-[data-testid="stToggle"] label p, [data-testid="stCheckbox"] label p {{
-    color: var(--grau) !important; font-size: 14px !important; }}
+.abschnitt {{ font-size: 20px; font-weight: 700; letter-spacing: -.01em; margin: 12px 4px -4px; }}
+[data-testid="stToggle"] label p, [data-testid="stCheckbox"] label p {{ color: var(--grau) !important; font-size: 14px !important; }}
 .st-key-kopfzeile [data-testid="stHorizontalBlock"] {{ flex-wrap: nowrap !important; align-items: center; }}
-.st-key-kopfzeile [data-testid="stColumn"], .st-key-kopfzeile [data-testid="column"] {{ min-width: 0 !important; }}
+.st-key-kopfzeile [data-testid="stColumn"] {{ min-width: 0 !important; }}
 .st-key-kopfzeile [data-testid="stColumn"]:last-child {{ flex: 0 0 auto !important; width: auto !important; }}
 
-/* ---------- Karten (Widgets) ---------- */
-[class*="st-key-karte"] {{
+/* ---------- Kacheln: einheitlich 16px Radius, 20px Innenabstand ---------- */
+[class*="st-key-karte"], .karte {{
     background: var(--karte); border-radius: 16px; padding: 20px; box-shadow: var(--schatten);
 }}
-.karte {{ background: var(--karte); border-radius: 16px; padding: 20px; box-shadow: var(--schatten); }}
+[class*="st-key-karte"] [data-testid="stVerticalBlock"] {{ gap: 12px; }}
 .kopf-label {{ color: var(--akzent) !important; font-size: 14px; font-weight: 600; margin: 0; }}
 .kopf-name {{ font-size: 22px; font-weight: 700; letter-spacing: -.01em; margin: 2px 0 0; line-height: 1.25; }}
 .kopf-ziel {{ color: var(--grau) !important; font-size: 15px; margin: 2px 0 0; }}
-.trennlinie {{ height: 1px; background: var(--linie); margin: 2px 0; }}
+.trennlinie {{ height: 1px; background: var(--linie); }}
 .feld-label {{ color: var(--grau) !important; font-size: 13px; margin: 0; }}
 
-/* ---------- iOS-Segmented-Control (Reiter, Gruppe, Geschlecht, Aktivität) ---------- */
-[data-testid="stButtonGroup"] {{ width: 100%; }}
-[data-testid="stButtonGroup"] > div {{ width: 100%; }}
-[class*="st-key-segment"] [data-testid="stButtonGroup"] [role="radiogroup"],
+/* ---------- Icons ---------- */
+.icon, .icon-gross {{
+    display: inline-block; flex: none; width: 1.05em; height: 1.05em; vertical-align: -0.15em; margin-right: 6px;
+    background-color: currentColor;
+    -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat;
+}}
+.icon-gross {{ width: 56px; height: 56px; margin: 0; }}
+
+/* ---------- iOS-Segmented-Control ---------- */
+[class*="st-key-segment"] [data-testid="stButtonGroup"],
+[class*="st-key-segment"] [data-testid="stButtonGroup"] > div {{ width: 100%; }}
 [class*="st-key-segment"] [data-testid="stButtonGroup"] > div > div {{
     display: flex !important; width: 100%; flex-wrap: nowrap !important; gap: 0 !important;
     background: var(--segment); border-radius: 10px; padding: 2px;
@@ -229,113 +395,57 @@ button {{ touch-action: manipulation; -webkit-tap-highlight-color: transparent; 
     border-radius: 8px !important; background: transparent !important; box-shadow: none !important;
     transition: background .2s ease;
 }}
-[class*="st-key-segment"] button p {{ color: var(--text) !important; font-size: 14px !important;
-    font-weight: 500 !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
-[class*="st-key-segment"] button[kind$="Active"],
-[class*="st-key-segment"] button[data-testid$="Active"] {{
-    background: var(--segment-an) !important; box-shadow: 0 1px 4px rgba(0,0,0,.15) !important;
-}}
+[class*="st-key-segment"] button p {{ color: var(--text) !important; font-size: 14px !important; font-weight: 500 !important;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+[class*="st-key-segment"] button[kind$="Active"], [class*="st-key-segment"] button[data-testid$="Active"] {{
+    background: var(--segment-an) !important; box-shadow: 0 1px 4px rgba(0,0,0,.15) !important; }}
 [class*="st-key-segment"] button[kind$="Active"] p,
 [class*="st-key-segment"] button[data-testid$="Active"] p {{ font-weight: 600 !important; }}
+.st-key-segment_reiter button:first-of-type p::before {{
+    content: ""; display: inline-block; width: 1.15em; height: 1.15em; margin-right: 6px; vertical-align: -0.22em;
+    background-color: var(--text);
+    -webkit-mask: url("{ICON_HANTEL}") center / contain no-repeat; mask: url("{ICON_HANTEL}") center / contain no-repeat;
+}}
 
-/* ---------- Übungs-Chips (große Daumen-Flächen) ---------- */
+/* ---------- Übungs-Chips ---------- */
 .st-key-uebung_auswahl [data-testid="stButtonGroup"] > div > div {{ flex-wrap: wrap !important; gap: 8px !important; }}
 .st-key-uebung_auswahl button {{
     min-height: 44px; padding: 0 16px !important; border: none !important; border-radius: 22px !important;
     background: var(--feld) !important; box-shadow: none !important;
 }}
 .st-key-uebung_auswahl button p {{ color: var(--text) !important; font-size: 15px !important; }}
-.st-key-uebung_auswahl button[kind$="Active"],
-.st-key-uebung_auswahl button[data-testid$="Active"] {{ background: var(--text) !important; }}
+.st-key-uebung_auswahl button[kind$="Active"], .st-key-uebung_auswahl button[data-testid$="Active"] {{
+    background: var(--text) !important; }}
 .st-key-uebung_auswahl button[kind$="Active"] p,
 .st-key-uebung_auswahl button[data-testid$="Active"] p {{ color: var(--karte) !important; font-weight: 600 !important; }}
 
-/* ---------- Stepper: −  Wert  + (immer in einer Zeile) ---------- */
-[class*="st-key-stepper"] [data-testid="stHorizontalBlock"] {{
-    display: flex !important; flex-direction: row !important; flex-wrap: nowrap !important;
-    align-items: center !important; justify-content: space-between !important; gap: 12px !important;
-}}
-[class*="st-key-stepper"] [data-testid="stColumn"],
-[class*="st-key-stepper"] [data-testid="column"] {{ min-width: 0 !important; width: auto !important; }}
-[class*="st-key-stepper"] [data-testid="stColumn"]:first-child,
-[class*="st-key-stepper"] [data-testid="stColumn"]:last-child,
-[class*="st-key-stepper"] [data-testid="column"]:first-child,
-[class*="st-key-stepper"] [data-testid="column"]:last-child {{ flex: 0 0 56px !important; }}
-[class*="st-key-stepper"] [data-testid="stColumn"]:nth-child(2),
-[class*="st-key-stepper"] [data-testid="column"]:nth-child(2) {{ flex: 1 1 auto !important; }}
-[class*="st-key-stepper"] [data-testid="stElementContainer"],
-[class*="st-key-stepper"] .stButton {{ width: auto !important; min-width: 0 !important; }}
-[class*="st-key-stepper"] button {{
-    position: relative; width: 56px !important; height: 56px !important; min-height: 56px; padding: 0 !important;
-    border: none !important; border-radius: 50% !important; background: var(--feld) !important;
-    box-shadow: none !important; transition: transform .1s ease;
-}}
-[class*="st-key-stepper"] button p {{ font-size: 0 !important; }}           /* Text "−"/"+" ausblenden */
-[class*="st-key-stepper"] button::before {{                                  /* SF-Symbol einblenden   */
-    content: ""; position: absolute; inset: 0; margin: auto; width: 22px; height: 22px;
-    background-color: var(--text);
-    -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat;
-}}
-[class*="st-key-minus_"] button {{ --icon: url("{ICON_MINUS}"); }}
-[class*="st-key-plus_"] button {{ --icon: url("{ICON_PLUS}"); }}
-[class*="st-key-stepper"] button:active {{ transform: scale(.92); }}
-
-/* ---------- Icons in HTML-Kacheln ---------- */
-.icon, .icon-gross {{
-    display: inline-block; flex: none; width: 1.05em; height: 1.05em; vertical-align: -0.15em;
-    background-color: currentColor;
-    -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat;
-}}
-.icon {{ margin-right: 6px; }}
-.icon-gross {{ width: 64px; height: 64px; }}
-
-/* Hantel vor "Training" im Reiter */
-.st-key-segment_reiter button:first-of-type p::before {{
-    content: ""; display: inline-block; width: 1.1em; height: 1.1em; margin-right: 6px; vertical-align: -0.2em;
-    background-color: var(--text);
-    -webkit-mask: url("{ICON_HANTEL}") center / contain no-repeat; mask: url("{ICON_HANTEL}") center / contain no-repeat;
-}}
-.stepper-wert {{ text-align: center; line-height: 1.05; }}
-.stepper-wert b {{ font-size: 36px; font-weight: 600; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }}
-.stepper-wert small {{ color: var(--grau) !important; font-size: 15px; font-weight: 500; margin-left: 4px; }}
-.stepper-wert span {{ display: block; color: var(--grau) !important; font-size: 13px; margin-bottom: 2px; }}
-
-/* ---------- Primär-Button (einziger Akzent) ---------- */
+/* ---------- Speicher-Button: einzige Akzentfarbe ---------- */
 [class*="st-key-speichern"], [class*="st-key-speichern"] > div {{ width: 100% !important; }}
 [class*="st-key-speichern"] button {{
     width: 100% !important; height: 54px; border: none !important; border-radius: 14px !important;
-    background: var(--akzent) !important; box-shadow: none !important;
-    transition: transform .1s ease, opacity .1s ease;
+    background: var(--akzent) !important; box-shadow: none !important; transition: transform .1s ease, opacity .1s ease;
 }}
 [class*="st-key-speichern"] button p {{ color: #FFFFFF !important; font-size: 17px !important; font-weight: 600 !important; }}
 [class*="st-key-speichern"] button:active {{ transform: scale(.97); opacity: .9; }}
 
-/* ---------- Text-Button "Letzten Satz löschen" ---------- */
 .st-key-letzten_loeschen button {{ background: transparent !important; border: none !important;
     box-shadow: none !important; padding: 8px 4px !important; min-height: 44px; }}
 .st-key-letzten_loeschen button p {{ color: var(--grau) !important; font-size: 15px !important; }}
 
-/* ---------- Regler ---------- */
-[data-testid="stSlider"] label p, [data-testid="stWidgetLabel"] p {{ color: var(--grau) !important; font-size: 13px !important; }}
-[data-testid="stSlider"] [role="slider"] {{ width: 26px !important; height: 26px !important;
-    background: #FFFFFF !important; box-shadow: 0 1px 4px rgba(0,0,0,.3) !important; }}
-[data-testid="stSliderThumbValue"], [data-testid="stThumbValue"] {{ color: var(--text) !important; font-weight: 600; }}
-[data-testid="stSliderTickBarMin"], [data-testid="stSliderTickBarMax"],
-[data-testid="stTickBarMin"], [data-testid="stTickBarMax"] {{ display: none; }}
-
-/* ---------- Maschinenfoto ---------- */
-.foto {{ border-radius: 20px; overflow: hidden; aspect-ratio: 4 / 3; background: var(--karte); box-shadow: var(--schatten); }}
-.foto img {{ width: 100%; height: 100%; object-fit: cover; display: block; }}
-.foto-leer {{ height: 100%; display: grid; place-content: center; justify-items: center; gap: 8px;
-              color: var(--grau) !important; font-size: 13px; text-align: center; padding: 24px; line-height: 1.5; }}
-.foto-leer b {{ color: var(--grau) !important; font-size: 40px; font-weight: 200; }}
+/* ---------- Maschinenfoto: komplett sichtbar ---------- */
+.foto {{ height: 300px; border-radius: 20px; overflow: hidden; background: var(--karte); padding: 12px;
+         box-shadow: var(--schatten); display: grid; place-items: center; }}
+.foto img {{ width: 100%; height: 100%; object-fit: contain; display: block; border-radius: 12px; }}
+.foto-leer {{ display: grid; justify-items: center; gap: 10px; color: var(--grau) !important;
+              font-size: 13px; text-align: center; line-height: 1.5; }}
 
 /* ---------- Kennzahlen ---------- */
 .karte-kopf {{ display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 10px; }}
 .karte-label {{ color: var(--akzent) !important; font-size: 14px; font-weight: 600; }}
 .karte-zeit {{ color: var(--grau) !important; font-size: 13px; white-space: nowrap; }}
 .gross {{ font-size: 40px; font-weight: 600; letter-spacing: -.025em; line-height: 1; font-variant-numeric: tabular-nums; }}
-.gross small, .messwert small, .widget-wert small {{ color: var(--grau) !important; font-weight: 500; margin-left: 3px; letter-spacing: 0; }}
+.gross small, .messwert small, .widget-wert small, .aufteilung small {{ color: var(--grau) !important; font-weight: 500;
+    margin-left: 3px; letter-spacing: 0; }}
 .gross small {{ font-size: 17px; }}
 .unterzeile {{ color: var(--grau) !important; font-size: 14px; margin-top: 8px; }}
 .verlaufslinie {{ width: 100%; height: 56px; display: block; margin-top: 16px; }}
@@ -343,8 +453,7 @@ button {{ touch-action: manipulation; -webkit-tap-highlight-color: transparent; 
                margin-top: 18px; padding-top: 14px; }}
 .aufteilung span {{ display: block; color: var(--grau) !important; font-size: 13px; }}
 .aufteilung b {{ font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }}
-.formel {{ color: var(--grau) !important; font-size: 12px !important; line-height: 1.6; margin: 14px 0 0;
-           font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace !important; }}
+.aufteilung small {{ font-size: 13px; }}
 
 .zusammenfassung {{ display: grid; grid-template-columns: auto 1fr; gap: 20px; align-items: center; }}
 .ring {{ width: 76px; height: 76px; border-radius: 50%; display: grid; place-items: center; }}
@@ -377,10 +486,9 @@ st.markdown(DESIGN_CSS, unsafe_allow_html=True)
 
 
 # ===============================================================
-# 5) HILFSFUNKTIONEN
+# 8) HILFSFUNKTIONEN
 # ===============================================================
 def zahl_format(wert: float, nachkommastellen=None) -> str:
-    """80.0 -> '80', 82.5 -> '82,5' (oder feste Nachkommastellen)"""
     text = f"{wert:g}" if nachkommastellen is None else f"{wert:.{nachkommastellen}f}"
     return text.replace(".", ",")
 
@@ -404,7 +512,6 @@ def zeile_anhaengen(pfad: Path, zeile: dict) -> None:
     pd.DataFrame([zeile]).to_csv(pfad, mode="a", header=not pfad.exists(), index=False, encoding="utf-8")
 
 
-# ---------- Bilder ----------
 def vergleichs_name(text: str) -> str:
     """'Bizepscurls am Kabelturm' -> 'bizepscurlsamkabelturm' (Umlaute, Leerzeichen, _ und - egal)"""
     text = unicodedata.normalize("NFC", text).lower()
@@ -418,16 +525,6 @@ def beispiel_dateiname(name: str) -> str:
     for umlaut, ersatz in (("ä", "ae"), ("ö", "oe"), ("ü", "ue"), ("ß", "ss")):
         ohne_klammer = ohne_klammer.replace(umlaut, ersatz)
     return re.sub(r"[^a-z0-9]+", "_", ohne_klammer).strip("_") + ".jpg"
-
-
-def bilder_ordner_finden():
-    """Ordner 'bilder' neben app.py – auch als 'Bilder' (Linux/Cloud unterscheidet Groß/Klein)."""
-    if BILDER_ORDNER.is_dir():
-        return BILDER_ORDNER
-    for ordner in APP_ORDNER.iterdir():
-        if ordner.is_dir() and ordner.name.lower() == "bilder":
-            return ordner
-    return None
 
 
 def bild_pfad_finden(uebung: dict):
@@ -446,8 +543,7 @@ def foto_fehlt_hinweis(uebung: dict) -> str:
     ordner = bilder_ordner_finden()
     if ordner is None:
         return "Ordner „bilder“ nicht gefunden.<br>Er muss direkt neben app.py liegen."
-    anzahl = sum(1 for datei in ordner.iterdir() if datei.suffix.lower() in BILD_ENDUNGEN)
-    return f"Kein passendes Foto ({anzahl} Bilder im Ordner).<br>Erwartet: bilder/{beispiel_dateiname(uebung['name'])}"
+    return f"Noch kein Foto.<br>Erwartet: bilder/{beispiel_dateiname(uebung['name'])}"
 
 
 @st.cache_data
@@ -457,9 +553,8 @@ def bild_als_html(pfad: str) -> str:
     return f'<img src="data:image/{BILD_ENDUNGEN[datei.suffix.lower()]};base64,{daten}" alt="">'
 
 
-# ---------- Bausteine der Oberfläche ----------
-def segment_control(optionen: list, zustand_key: str, widget_key: str, bei_aenderung=None, **zusatz):
-    """iOS-Segmented-Control, das nie 'leer' werden kann (zweites Antippen hebt die Auswahl nicht auf)."""
+def segment_control(optionen: list, zustand_key: str, widget_key: str, bei_aenderung=None) -> None:
+    """iOS-Segmented-Control, das nie 'leer' werden kann."""
     st.session_state[widget_key] = st.session_state[zustand_key]
 
     def uebernehmen():
@@ -471,30 +566,7 @@ def segment_control(optionen: list, zustand_key: str, widget_key: str, bei_aende
 
     with st.container(key=f"segment_{widget_key}"):
         st.segmented_control(widget_key, optionen, key=widget_key, on_change=uebernehmen,
-                             label_visibility="collapsed", **zusatz)
-
-
-def wert_aendern(feld: str, schritt: float, minimum: float, maximum: float, nachkommastellen: int) -> None:
-    neuer_wert = st.session_state[feld] + schritt
-    st.session_state[feld] = round(min(max(neuer_wert, minimum), maximum), 2)   # 2 Stellen: 37,5 bleibt 37,5
-
-
-def stepper(feld: str, beschriftung: str, einheit: str, schritt: float,
-            minimum: float, maximum: float, nachkommastellen: int = 0) -> None:
-    """− Wert + in einer festen Zeile. Die Buttons sind 56 px groß (Daumen-tauglich)."""
-    wert = st.session_state[feld]
-    wert_text = zahl_format(wert, nachkommastellen) if nachkommastellen else zahl_format(wert)
-    with st.container(key=f"stepper_{feld}"):
-        spalte_minus, spalte_wert, spalte_plus = st.columns([1, 3, 1], vertical_alignment="center")
-        with spalte_minus:
-            st.button("−", key=f"minus_{feld}", on_click=wert_aendern,
-                      args=(feld, -schritt, minimum, maximum, nachkommastellen))
-        with spalte_wert:
-            st.markdown(f'<div class="stepper-wert"><span>{beschriftung}</span>'
-                        f'<b>{wert_text}</b><small>{einheit}</small></div>', unsafe_allow_html=True)
-        with spalte_plus:
-            st.button("+", key=f"plus_{feld}", on_click=wert_aendern,
-                      args=(feld, schritt, minimum, maximum, nachkommastellen))
+                             label_visibility="collapsed")
 
 
 def trennlinie() -> None:
@@ -502,7 +574,7 @@ def trennlinie() -> None:
 
 
 # ===============================================================
-# 6) TRAINING: DATEN & LOGIK
+# 9) TRAINING: DATEN & LOGIK
 # ===============================================================
 def heutige_saetze_laden() -> pd.DataFrame:
     alle = csv_laden(TRAINING_CSV, TRAINING_SPALTEN)
@@ -520,12 +592,11 @@ def letztes_gewicht(uebung: dict) -> float:
 
 
 def uebung_waehlen(uebung_name: str) -> None:
-    """Setzt Übung, passende Gruppe und Startwerte für Gewicht/Wiederholungen."""
     uebung = UEBUNG_NACH_NAME[uebung_name]
     st.session_state["aktuelle_uebung"] = uebung_name
     st.session_state["gruppe"] = uebung["gruppe"]
-    st.session_state["gewicht"] = letztes_gewicht(uebung)
-    st.session_state["wiederholungen"] = int(uebung["wdh"].split("–")[0])
+    wert_von_aussen_setzen("gewicht", letztes_gewicht(uebung))
+    wert_von_aussen_setzen("wiederholungen", int(uebung["wdh"].split("–")[0]))
 
 
 def naechste_offene_uebung(heute_df: pd.DataFrame) -> str:
@@ -536,14 +607,15 @@ def naechste_offene_uebung(heute_df: pd.DataFrame) -> str:
 
 
 def bei_uebung_angetippt() -> None:
-    neue_uebung = st.session_state["uebung_auswahl"]
-    if neue_uebung is not None:
-        uebung_waehlen(neue_uebung)
+    if st.session_state["uebung_auswahl"] is not None:
+        uebung_waehlen(st.session_state["uebung_auswahl"])
 
 
 def bei_satz_speichern() -> None:
+    stepper_wert_uebernehmen("gewicht")            # falls direkt nach dem letzten Tippen gespeichert wird
+    stepper_wert_uebernehmen("wiederholungen")
     uebung = UEBUNG_NACH_NAME[st.session_state["aktuelle_uebung"]]
-    gewicht, wiederholungen = float(st.session_state["gewicht"]), int(st.session_state["wiederholungen"])
+    gewicht, wiederholungen = float(st.session_state["gewicht"]), int(round(st.session_state["wiederholungen"]))
     datum, uhrzeit = jetzt_datum_uhrzeit()
     zeile_anhaengen(TRAINING_CSV, {"Datum": datum, "Uhrzeit": uhrzeit, "Gruppe": uebung["gruppe"],
                                    "Uebung": uebung["name"], "Gewicht_kg": gewicht,
@@ -562,25 +634,24 @@ def bei_letzten_satz_loeschen() -> None:
 
 
 # ===============================================================
-# 7) KÖRPERDATEN: DATEN & KALORIEN
+# 10) KÖRPERDATEN: DATEN & KALORIEN
 # ===============================================================
 def bei_koerpergewicht_speichern() -> None:
+    stepper_wert_uebernehmen("koerpergewicht")
     gewicht = round(float(st.session_state["koerpergewicht"]), 1)
     datum, uhrzeit = jetzt_datum_uhrzeit()
     zeile_anhaengen(GEWICHT_CSV, {"Datum": datum, "Uhrzeit": uhrzeit, "Gewicht_kg": gewicht})
     st.session_state["meldung"] = f"Körpergewicht {zahl_format(gewicht, 1)} kg gespeichert"
 
 
-def kalorienbedarf(gewicht_kg: float, groesse_cm: float, alter_jahre: int,
-                   ist_maennlich: bool, aktivitaetsfaktor: float):
+def kalorienbedarf_harris_benedict(gewicht_kg: float, groesse_cm: float, alter_jahre: int, pal: float):
     """
-    Mifflin-St. Jeor:
-      Grundumsatz  = 10 × Gewicht(kg) + 6,25 × Größe(cm) − 5 × Alter(J) + 5    (Männer)
-      Grundumsatz  = 10 × Gewicht(kg) + 6,25 × Größe(cm) − 5 × Alter(J) − 161  (Frauen)
-      Gesamtbedarf = Grundumsatz × Aktivitätsfaktor
+    Harris-Benedict (überarbeitete Fassung nach Roza & Shizgal, 1984), Männer:
+      Grundumsatz  = 88,362 + 13,397 × Gewicht(kg) + 4,799 × Größe(cm) − 5,677 × Alter(J)
+      Gesamtbedarf = Grundumsatz × PAL
     """
-    grundumsatz = 10 * gewicht_kg + 6.25 * groesse_cm - 5 * alter_jahre + (5 if ist_maennlich else -161)
-    return grundumsatz, grundumsatz * aktivitaetsfaktor
+    grundumsatz = 88.362 + 13.397 * gewicht_kg + 4.799 * groesse_cm - 5.677 * alter_jahre
+    return grundumsatz, grundumsatz * pal
 
 
 def verlaufslinie_svg(werte: list) -> str:
@@ -598,7 +669,7 @@ def verlaufslinie_svg(werte: list) -> str:
 
 
 # ===============================================================
-# 8) STARTZUSTAND
+# 11) STARTZUSTAND + Eingaben der Komponenten übernehmen
 # ===============================================================
 heute_df = heutige_saetze_laden()
 gewichte_df = csv_laden(GEWICHT_CSV, GEWICHT_SPALTEN)
@@ -608,14 +679,18 @@ if st.session_state.get("aktuelle_uebung") not in UEBUNG_NACH_NAME:
 if "bereich" not in st.session_state:
     st.session_state["bereich"] = "Training"
 if "koerpergewicht" not in st.session_state:
-    st.session_state["koerpergewicht"] = (float(gewichte_df["Gewicht_kg"].iloc[-1])
-                                          if not gewichte_df.empty else 80.0)   # Annahme: 80 kg
+    wert_von_aussen_setzen("koerpergewicht", float(gewichte_df["Gewicht_kg"].iloc[-1])
+                           if not gewichte_df.empty else 80.0)   # Annahme: 80 kg
+
+for stepper_feld in ("gewicht", "wiederholungen", "koerpergewicht"):
+    stepper_wert_uebernehmen(stepper_feld)
+koerperangaben_uebernehmen()
 
 if "meldung" in st.session_state:
     st.toast(st.session_state.pop("meldung"))
 
 # ===============================================================
-# 9) KOPF: Datum, Hell/Dunkel, Titel, Reiter
+# 12) KOPF: Datum, Hell/Dunkel, Titel, Reiter
 # ===============================================================
 WOCHENTAGE = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 MONATE = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli",
@@ -634,12 +709,12 @@ st.markdown(f'<p class="titel">{st.session_state["bereich"]}</p>', unsafe_allow_
 segment_control(["Training", "Körperdaten"], "bereich", "reiter")
 
 # ===============================================================
-# 10) REITER: TRAINING
+# 13) REITER: TRAINING
 # ===============================================================
 if st.session_state["bereich"] == "Training":
     aktuelle_uebung = UEBUNG_NACH_NAME[st.session_state["aktuelle_uebung"]]
 
-    # Foto der Maschine
+    # Foto der Maschine (komplett sichtbar)
     bild_pfad = bild_pfad_finden(aktuelle_uebung)
     if bild_pfad:
         st.markdown(f'<div class="foto">{bild_als_html(bild_pfad)}</div>', unsafe_allow_html=True)
@@ -647,7 +722,7 @@ if st.session_state["bereich"] == "Training":
         st.markdown(f'<div class="foto"><div class="foto-leer">{icon_html(ICON_HANTEL, "icon-gross")}'
                     f'{foto_fehlt_hinweis(aktuelle_uebung)}</div></div>', unsafe_allow_html=True)
 
-    # Übung wählen
+    # Kachel: Übung wählen
     with st.container(key="karte_auswahl"):
         segment_control(GRUPPEN, "gruppe", "gruppen_auswahl")
         uebungen_der_gruppe = [u["name"] for u in ALLE_UEBUNGEN if u["gruppe"] == st.session_state["gruppe"]]
@@ -661,7 +736,7 @@ if st.session_state["bereich"] == "Training":
         st.pills("Übung", uebungen_der_gruppe, key="uebung_auswahl", format_func=chip_text,
                  on_change=bei_uebung_angetippt, label_visibility="collapsed")
 
-    # Satz eintragen
+    # Kachel: Satz eintragen
     with st.container(key="karte_satz"):
         satz_nummer = min(saetze_erledigt(heute_df, aktuelle_uebung["name"]) + 1, aktuelle_uebung["saetze"])
         tag_text = f' · {aktuelle_uebung["tag"]}' if aktuelle_uebung.get("tag") else ""
@@ -670,12 +745,12 @@ if st.session_state["bereich"] == "Training":
                     f'<p class="kopf-ziel">Satz {satz_nummer} von {aktuelle_uebung["saetze"]} · '
                     f'Ziel {aktuelle_uebung["wdh"]} Wiederholungen</p>', unsafe_allow_html=True)
         trennlinie()
-        stepper("gewicht", "Gewicht", "kg", schritt=2.5, minimum=0, maximum=500, nachkommastellen=0)
+        stepper("gewicht", "Gewicht", "kg", schritt=2.5, minimum=0, maximum=500)
         trennlinie()
         stepper("wiederholungen", "Wiederholungen", "", schritt=1, minimum=1, maximum=100)
         st.button("Satz speichern", key="speichern_satz", on_click=bei_satz_speichern)
 
-    # Zusammenfassung
+    # Kachel: Zusammenfassung
     geplant = sum(u["saetze"] for u in ALLE_UEBUNGEN)
     gezaehlt = sum(min(saetze_erledigt(heute_df, u["name"]), u["saetze"]) for u in ALLE_UEBUNGEN)
     fertig = sum(saetze_erledigt(heute_df, u["name"]) >= u["saetze"] for u in ALLE_UEBUNGEN)
@@ -693,7 +768,7 @@ if st.session_state["bereich"] == "Training":
       </div>
     </div>""", unsafe_allow_html=True)
 
-    # Verlauf heute
+    # Verlauf heute als Widgets
     st.markdown('<p class="abschnitt">Verlauf heute</p>', unsafe_allow_html=True)
     if heute_df.empty:
         st.markdown('<div class="leer">Noch nichts eingetragen.<br>'
@@ -716,10 +791,10 @@ if st.session_state["bereich"] == "Training":
         st.button("Letzten Satz löschen", key="letzten_loeschen", on_click=bei_letzten_satz_loeschen)
 
 # ===============================================================
-# 11) REITER: KÖRPERDATEN
+# 14) REITER: KÖRPERDATEN
 # ===============================================================
 else:
-    # Aktuelles Körpergewicht
+    # Kachel: aktuelles Körpergewicht
     if gewichte_df.empty:
         gewicht_text, zeit_text, unterzeile, linie_html = "–", "", "Noch kein Gewicht gespeichert", ""
     else:
@@ -744,42 +819,42 @@ else:
       {linie_html}
     </div>""", unsafe_allow_html=True)
 
-    # Gewicht eintragen
+    # Kachel: Gewicht eintragen
     with st.container(key="karte_gewicht"):
         st.markdown('<p class="kopf-name">Gewicht eintragen</p>'
                     '<p class="kopf-ziel">Am besten morgens, nüchtern</p>', unsafe_allow_html=True)
         trennlinie()
-        stepper("koerpergewicht", "Körpergewicht", "kg", schritt=0.1, minimum=30, maximum=300, nachkommastellen=1)
+        stepper("koerpergewicht", "Körpergewicht", "kg", schritt=0.1, minimum=30, maximum=300, nachkomma=1)
         st.button("Gewicht speichern", key="speichern_gewicht", on_click=bei_koerpergewicht_speichern)
 
-    # Kalorienbedarf
+    # Kachel: Kalorienbedarf (nur das Ergebnis)
     st.markdown('<p class="abschnitt">Kalorienbedarf</p>', unsafe_allow_html=True)
     rechen_gewicht = (float(gewichte_df["Gewicht_kg"].iloc[-1]) if not gewichte_df.empty
                       else float(st.session_state["koerpergewicht"]))
-    ist_maennlich = st.session_state["geschlecht"] == "Männlich"
-    faktor = AKTIVITAETS_STUFEN[st.session_state["aktivitaet"]]
-    grundumsatz, gesamtbedarf = kalorienbedarf(rechen_gewicht, st.session_state["groesse"],
-                                               st.session_state["alter"], ist_maennlich, faktor)
+    grundumsatz, gesamtbedarf = kalorienbedarf_harris_benedict(
+        rechen_gewicht, st.session_state["groesse"], st.session_state["alter"],
+        PAL_STUFEN[st.session_state["pal_stufe"]])
 
     st.markdown(f"""
     <div class="karte">
-      <div class="karte-kopf"><span class="karte-label">Täglicher Bedarf</span>
-        <span class="karte-zeit">Heute</span></div>
+      <div class="karte-kopf"><span class="karte-label">Täglicher Bedarf</span><span class="karte-zeit">Heute</span></div>
       <div class="gross">{tausender(gesamtbedarf)}<small>kcal</small></div>
       <div class="aufteilung">
-        <div><span>Grundumsatz</span><b>{tausender(grundumsatz)}<small> kcal</small></b></div>
-        <div><span>Aktivität</span><b>{st.session_state["aktivitaet"]}</b></div>
+        <div><span>Grundumsatz</span><b>{tausender(grundumsatz)}<small>kcal</small></b></div>
+        <div><span>Aktivität</span><b>{st.session_state["pal_stufe"]}</b></div>
       </div>
     </div>""", unsafe_allow_html=True)
 
-    with st.container(key="karte_kalorien"):
-        st.slider("Alter (Jahre)", min_value=14, max_value=80, key="alter", on_change=einstellungen_speichern)
-        st.slider("Körpergröße (cm)", min_value=140, max_value=210, key="groesse", on_change=einstellungen_speichern)
+    # Kachel: Angaben (iOS-Scrollrad + Aktivität)
+    with st.container(key="karte_angaben"):
+        st.markdown('<p class="feld-label">Deine Angaben</p>', unsafe_allow_html=True)
+        ios_eingabe(art="walzen", token=0, farben=KOMPONENTEN_FARBEN, key="walzen_koerper", default=None,
+                    felder=[
+                        {"key": "alter", "label": "Alter", "min": 14, "max": 90, "einheit": "Jahre",
+                         "wert": int(st.session_state["alter"])},
+                        {"key": "groesse", "label": "Größe", "min": 140, "max": 220, "einheit": "cm",
+                         "wert": int(st.session_state["groesse"])},
+                    ])
         trennlinie()
-        st.markdown('<p class="feld-label">Geschlecht</p>', unsafe_allow_html=True)
-        segment_control(["Männlich", "Weiblich"], "geschlecht", "geschlecht_auswahl",
-                        bei_aenderung=einstellungen_speichern)
-        st.markdown(f'<p class="feld-label">Aktivität · {AKTIVITAETS_TEXT[st.session_state["aktivitaet"]]}</p>',
-                    unsafe_allow_html=True)
-        segment_control(list(AKTIVITAETS_STUFEN), "aktivitaet", "aktivitaet_auswahl",
-                        bei_aenderung=einstellungen_speichern)
+        st.markdown('<p class="feld-label">Aktivität</p>', unsafe_allow_html=True)
+        segment_control(list(PAL_STUFEN), "pal_stufe", "pal_auswahl", bei_aenderung=einstellungen_speichern)
