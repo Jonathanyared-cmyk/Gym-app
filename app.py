@@ -11,6 +11,7 @@ import html
 import json
 import re
 import tempfile
+import time
 import unicodedata
 from datetime import datetime
 from pathlib import Path
@@ -50,7 +51,16 @@ UEBUNG_NACH_NAME = {uebung["name"]: uebung for uebung in ALLE_UEBUNGEN}
 GRUPPEN = [block["gruppe"] for block in TRAININGSPLAN]
 
 # PAL-Faktor (Aktivität) – Standard: "Sehr aktiv" = 1,75
-PAL_STUFEN = {"Wenig": 1.2, "Leicht": 1.375, "Mittel": 1.55, "Sehr aktiv": 1.75}
+PAL_STUFEN = {
+    "Wenig aktiv (sitzend)": 1.2,
+    "Moderat aktiv (1-3x Training)": 1.375,
+    "Sehr aktiv (3-5x hartes Training)": 1.55,
+    "Extrem aktiv (Tägliches Training)": 1.725,
+}
+MUSKELAUFBAU_UEBERSCHUSS_KCAL = 300
+PROTEIN_G_PRO_KG = 2.0
+FETT_G_PRO_KG = 0.8
+PAUSE_SEKUNDEN = 90
 
 # ===============================================================
 # 2) DATEIEN
@@ -65,7 +75,8 @@ GEWICHT_SPALTEN = ["Datum", "Uhrzeit", "Gewicht_kg"]
 BILD_ENDUNGEN = {".jpg": "jpeg", ".jpeg": "jpeg", ".png": "png", ".webp": "webp"}
 
 # Annahmen für den ersten Start – danach merkt sich die App deine Werte
-STANDARD_EINSTELLUNGEN = {"light_mode": False, "alter": 25, "groesse": 178, "pal_stufe": "Sehr aktiv"}
+STANDARD_EINSTELLUNGEN = {"light_mode": False, "alter": 25, "groesse": 178,
+                          "pal_stufe": "Sehr aktiv (3-5x hartes Training)"}
 
 st.set_page_config(page_title="Gym Log", page_icon="🏋️", layout="centered",
                    initial_sidebar_state="collapsed")
@@ -193,12 +204,13 @@ KOMPONENTEN_HTML = r"""<!doctype html>
   .wert small { color: var(--grau); font-size: 15px; font-weight: 500; margin-left: 4px; }
 
   /* Scrollrad-Zeilen wie in den iOS-Einstellungen */
-  .zeile { position: relative; display: flex; align-items: center; justify-content: space-between;
-           height: 52px; border-bottom: 1px solid var(--linie); }
+  .zeile { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 16px;
+           min-height: 52px; padding: 8px 0; border-bottom: 1px solid var(--linie); }
   .zeile:last-child { border-bottom: none; }
-  .zeile label { color: var(--text); font-size: 17px; }
-  .pille { color: var(--text); background: var(--feld); border-radius: 8px; padding: 6px 12px;
-           font-size: 17px; font-variant-numeric: tabular-nums; }
+  .zeile label { color: var(--text); font-size: clamp(14px, 4vw, 17px); white-space: nowrap; }
+  .pille { color: var(--text); background: var(--feld); border-radius: 8px; padding: 6px 12px; text-align: right;
+           font-size: clamp(14px, 4vw, 17px); font-variant-numeric: tabular-nums;
+           white-space: normal; word-break: keep-all; max-width: 70%; }
   .zeile select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer;
                   font-size: 16px; -webkit-appearance: none; appearance: none; }
 </style></head>
@@ -248,14 +260,18 @@ KOMPONENTEN_HTML = r"""<!doctype html>
     if (!gebaut) {
       document.getElementById("app").innerHTML = args.felder.map((f, i) => {
         let optionen = "";
-        for (let v = f.min; v <= f.max; v++) optionen += '<option value="' + v + '">' + v + ' ' + f.einheit + '</option>';
+        if (f.optionen) {   // Text-Auswahl (z. B. Aktivität)
+          f.optionen.forEach(o => { optionen += '<option value="' + o + '">' + o + '</option>'; });
+        } else {            // Zahlen-Walze (Alter, Größe)
+          for (let v = f.min; v <= f.max; v++) optionen += '<option value="' + v + '">' + v + ' ' + f.einheit + '</option>';
+        }
         return '<div class="zeile"><label for="walze' + i + '">' + f.label + '</label>' +
                '<span class="pille" id="pille' + i + '"></span>' +
                '<select id="walze' + i + '" aria-label="' + f.label + '">' + optionen + '</select></div>';
       }).join("");
       args.felder.forEach((f, i) => {
         document.getElementById("walze" + i).onchange = (e) => {
-          werte[f.key] = Number(e.target.value);
+          werte[f.key] = f.optionen ? e.target.value : Number(e.target.value);
           walzenAnzeigen();
           senden("streamlit:setComponentValue", { value: { werte: werte, token: letzterToken }, dataType: "json" });
         };
@@ -267,7 +283,7 @@ KOMPONENTEN_HTML = r"""<!doctype html>
   function walzenAnzeigen() {
     args.felder.forEach((f, i) => {
       document.getElementById("walze" + i).value = String(werte[f.key]);
-      document.getElementById("pille" + i).textContent = werte[f.key] + " " + f.einheit;
+      document.getElementById("pille" + i).textContent = f.optionen ? werte[f.key] : werte[f.key] + " " + f.einheit;
     });
   }
 
@@ -321,9 +337,12 @@ def stepper(feld: str, beschriftung: str, einheit: str, schritt: float,
 def koerperangaben_uebernehmen() -> None:
     antwort = st.session_state.get("walzen_koerper")
     if isinstance(antwort, dict) and "werte" in antwort:
-        neu_alter, neu_groesse = int(antwort["werte"]["alter"]), int(antwort["werte"]["groesse"])
-        if (neu_alter, neu_groesse) != (st.session_state["alter"], st.session_state["groesse"]):
-            st.session_state["alter"], st.session_state["groesse"] = neu_alter, neu_groesse
+        werte = antwort["werte"]
+        neu = (int(werte["alter"]), int(werte["groesse"]), werte.get("pal_stufe", st.session_state["pal_stufe"]))
+        if neu[2] not in PAL_STUFEN:
+            return
+        if neu != (st.session_state["alter"], st.session_state["groesse"], st.session_state["pal_stufe"]):
+            st.session_state["alter"], st.session_state["groesse"], st.session_state["pal_stufe"] = neu
             einstellungen_speichern()
 
 
@@ -354,9 +373,15 @@ html, body, .stApp, .stApp * {{
 [data-testid="stElementContainer"] p {{ margin: 0; }}
 
 /* ---------- Kein Text wird abgeschnitten (nie "..."), Schrift passt sich an ---------- */
-.stApp button p, .stApp button span, .widget-name, .kopf-name, .kopf-ziel {{
-    white-space: normal !important; word-break: keep-all; overflow-wrap: anywhere;
-    overflow: visible !important; text-overflow: clip !important;
+.stApp p, .stApp span, .stApp button, .stApp button p,
+.karte, .widget, .widget-name, .kopf-name, .kopf-ziel, .feld-label, .messwert span {{
+    white-space: normal !important; word-break: keep-all !important; overflow-wrap: break-word;
+    overflow: visible; text-overflow: clip !important; hyphens: none;
+}}
+/* Fließtext skaliert flüssig mit der iPhone-Breite (große Kennzahlen bleiben fest) */
+.stApp button p, .kopf-ziel, .feld-label, .messwert span, .widget-name, .widget-info,
+.unterzeile, .aufteilung span, .karte-label, .kopf-label {{
+    font-size: clamp(14px, 4vw, 17px) !important;
 }}
 iframe {{ border: none; display: block; }}
 button {{ touch-action: manipulation; -webkit-tap-highlight-color: transparent; }}
@@ -440,16 +465,16 @@ button {{ touch-action: manipulation; -webkit-tap-highlight-color: transparent; 
 .st-key-letzten_loeschen button p {{ color: var(--grau) !important; font-size: 15px !important; }}
 
 /* ---------- Maschinenfoto: komplett sichtbar ---------- */
-.foto {{ width: 100%; height: 220px; max-height: 220px; border-radius: 16px; overflow: hidden;
-         background-color: var(--karte); padding: 16px; box-shadow: var(--schatten);
+.foto {{ width: 100%; height: 200px; max-height: 200px; border-radius: 14px; margin-bottom: 12px;
+         overflow: hidden; background-color: var(--karte); box-shadow: var(--schatten);
          display: flex; align-items: center; justify-content: center; }}
-.foto img {{ width: 100%; height: 100%; max-height: 188px; object-fit: contain !important;
+.foto img {{ width: 100%; height: 100%; max-height: 200px; object-fit: contain !important;
              background-color: var(--karte); display: block; }}
 .foto-leer {{ display: grid; justify-items: center; gap: 10px; color: var(--grau) !important;
               font-size: 13px; text-align: center; line-height: 1.5; }}
 
 /* ---------- Kennzahlen ---------- */
-.karte-kopf {{ display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 10px; }}
+.karte-kopf {{ display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 16px; }}
 .karte-label {{ color: var(--akzent) !important; font-size: 14px; font-weight: 600; }}
 .karte-zeit {{ color: var(--grau) !important; font-size: 13px; white-space: nowrap; }}
 .gross {{ font-size: 40px; font-weight: 600; letter-spacing: -.025em; line-height: 1; font-variant-numeric: tabular-nums; }}
@@ -459,7 +484,7 @@ button {{ touch-action: manipulation; -webkit-tap-highlight-color: transparent; 
 .unterzeile {{ color: var(--grau) !important; font-size: 14px; margin-top: 8px; }}
 .verlaufslinie {{ width: 100%; height: 56px; display: block; margin-top: 16px; }}
 .aufteilung {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; border-top: 1px solid var(--linie);
-               margin-top: 18px; padding-top: 14px; }}
+               margin-top: 16px; padding-top: 16px; }}
 .aufteilung span {{ display: block; color: var(--grau) !important; font-size: 13px; }}
 .aufteilung b {{ font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }}
 .aufteilung small {{ font-size: 13px; }}
@@ -478,17 +503,42 @@ button {{ touch-action: manipulation; -webkit-tap-highlight-color: transparent; 
 .widgets {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }}
 .widget {{ background: var(--karte); border-radius: 16px; padding: 16px; display: grid; gap: 14px;
            min-width: 0; box-shadow: var(--schatten); }}
-.widget-kopf {{ display: flex; justify-content: space-between; gap: 8px; }}
-.widget-name {{ font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+.widget-kopf {{ display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }}
+.widget-name {{ font-weight: 600; line-height: 1.3; min-width: 0; }}
 .widget-zeit {{ color: var(--grau) !important; font-size: 13px; flex: none; }}
 .widget-wert {{ font-size: 28px; font-weight: 600; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }}
 .widget-wert small {{ font-size: 14px; }}
 .widget-info {{ color: var(--grau) !important; font-size: 13px; }}
-.leer {{ background: var(--karte); border-radius: 16px; padding: 28px 20px; text-align: center;
+.leer {{ background: var(--karte); border-radius: 16px; padding: 16px; text-align: center;
          color: var(--grau) !important; font-size: 15px; line-height: 1.5; box-shadow: var(--schatten); }}
 
+/* ---------- Ausklappbereich (1RM) als Kachel ---------- */
+[data-testid="stExpander"] details {{ background: var(--karte) !important; border: none !important;
+    border-radius: 16px !important; box-shadow: var(--schatten); }}
+[data-testid="stExpander"] summary {{ padding: 16px !important; }}
+[data-testid="stExpander"] summary p {{ font-weight: 600 !important; }}
+[data-testid="stExpander"] summary svg {{ color: var(--grau) !important; fill: var(--grau) !important; }}
+[data-testid="stExpanderDetails"] {{ padding: 0 16px 16px !important; }}
+
+/* ---------- Flache iOS-Tabelle ---------- */
+.zonen {{ width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }}
+.zonen td {{ padding: 12px 0; border-bottom: 1px solid var(--linie); color: var(--text);
+             font-size: clamp(14px, 4vw, 17px); vertical-align: top; }}
+.zonen tr:last-child td {{ border-bottom: none; }}
+.zonen td:last-child {{ text-align: right; font-weight: 600; white-space: nowrap !important; }}
+.zonen small {{ display: block; color: var(--grau) !important; font-size: 13px; margin-top: 2px; }}
+.hinweis {{ color: var(--grau) !important; font-size: 13px !important; margin-top: 12px !important; }}
+
+/* ---------- Makro-Zeilen ---------- */
+.makro {{ display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 12px 0;
+          border-bottom: 1px solid var(--linie); }}
+.makro:last-child {{ border-bottom: none; padding-bottom: 0; }}
+.makro span {{ color: var(--text); font-size: clamp(14px, 4vw, 17px); }}
+.makro b {{ font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap !important; }}
+.makro small {{ color: var(--grau) !important; font-size: 14px; font-weight: 500; margin-left: 3px; }}
+
 [data-testid="stToast"] {{ background: var(--karte) !important; border-radius: 14px !important; }}
-@media (max-width: 360px) {{ .widgets {{ grid-template-columns: 1fr; }} }}
+@media (max-width: 480px) {{ .widgets {{ grid-template-columns: 1fr; }} }}
 </style>
 """
 st.markdown(DESIGN_CSS, unsafe_allow_html=True)
@@ -630,6 +680,7 @@ def bei_satz_speichern() -> None:
                                    "Uebung": uebung["name"], "Gewicht_kg": gewicht,
                                    "Wiederholungen": wiederholungen})
     st.session_state["meldung"] = f"{uebung['name']} · {zahl_format(gewicht)} kg × {wiederholungen}"
+    st.session_state["pause_start"] = time.time()   # startet den 90-Sekunden-Pausentimer
     heute_df = heutige_saetze_laden()
     if saetze_erledigt(heute_df, uebung["name"]) >= uebung["saetze"]:
         uebung_waehlen(naechste_offene_uebung(heute_df))
@@ -653,14 +704,94 @@ def bei_koerpergewicht_speichern() -> None:
     st.session_state["meldung"] = f"Körpergewicht {zahl_format(gewicht, 1)} kg gespeichert"
 
 
-def kalorienbedarf_harris_benedict(gewicht_kg: float, groesse_cm: float, alter_jahre: int, pal: float):
+def ernaehrungsplan_berechnen(gewicht_kg: float, groesse_cm: float, alter_jahre: int, pal: float) -> dict:
     """
-    Harris-Benedict (überarbeitete Fassung nach Roza & Shizgal, 1984), Männer:
-      Grundumsatz  = 88,362 + 13,397 × Gewicht(kg) + 4,799 × Größe(cm) − 5,677 × Alter(J)
-      Gesamtbedarf = Grundumsatz × PAL
+    Mifflin-St. Jeor (Männer):
+      Grundumsatz (BMR) = 10 × Gewicht(kg) + 6,25 × Größe(cm) − 5 × Alter(J) + 5
+      Tagesbedarf (TDEE) = BMR × PAL
+      Zielbedarf         = TDEE + 300 kcal (sauberer Muskelaufbau)
+    Makros (bezogen auf den Zielbedarf):
+      Protein = 2,0 g/kg  (4 kcal/g)   Fett = 0,8 g/kg  (9 kcal/g)
+      Kohlenhydrate = restliche kcal / 4
     """
-    grundumsatz = 88.362 + 13.397 * gewicht_kg + 4.799 * groesse_cm - 5.677 * alter_jahre
-    return grundumsatz, grundumsatz * pal
+    grundumsatz = 10 * gewicht_kg + 6.25 * groesse_cm - 5 * alter_jahre + 5
+    tagesbedarf = grundumsatz * pal
+    zielbedarf = tagesbedarf + MUSKELAUFBAU_UEBERSCHUSS_KCAL
+    protein_g = PROTEIN_G_PRO_KG * gewicht_kg
+    fett_g = FETT_G_PRO_KG * gewicht_kg
+    kohlenhydrate_g = max(0.0, (zielbedarf - protein_g * 4 - fett_g * 9) / 4)
+    return {"grundumsatz": grundumsatz, "tagesbedarf": tagesbedarf, "zielbedarf": zielbedarf,
+            "protein_g": protein_g, "fett_g": fett_g, "kohlenhydrate_g": kohlenhydrate_g}
+
+
+# ===============================================================
+# 10b) TRAININGS-FUNKTIONEN: Pausentimer, Fortschritts-Diagramm, 1RM
+# ===============================================================
+def pausentimer_html(start_zeitstempel: float, farben_dict: dict) -> str:
+    """Countdown läuft im Browser: tickt jede Sekunde, ohne die App neu zu laden."""
+    ende_ms = int((start_zeitstempel + PAUSE_SEKUNDEN) * 1000)
+    return f"""
+    <div id="timer" style="display:flex;justify-content:space-between;align-items:center;gap:16px;
+         font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue','Segoe UI',Roboto,Arial,sans-serif;
+         -webkit-font-smoothing:antialiased;">
+      <span style="color:{farben_dict['grau']};font-size:clamp(14px,4vw,17px);">Satzpause</span>
+      <b id="zeit" style="color:#FF9500;font-size:34px;font-weight:600;font-variant-numeric:tabular-nums;
+         letter-spacing:-.02em;"></b>
+    </div>
+    <script>
+      const ende = {ende_ms};
+      const zeit = document.getElementById("zeit");
+      function ticken() {{
+        const rest = Math.max(0, Math.round((ende - Date.now()) / 1000));
+        if (rest === 0) {{
+          zeit.textContent = "Bereit für den nächsten Satz!";
+          zeit.style.fontSize = "clamp(15px, 4.5vw, 19px)";
+          zeit.style.color = "{farben_dict['text']}";
+          return;
+        }}
+        zeit.textContent = Math.floor(rest / 60) + ":" + String(rest % 60).padStart(2, "0");
+        setTimeout(ticken, 250);
+      }}
+      ticken();
+    </script>
+    <style>html,body{{margin:0;background:transparent;overflow:hidden}}</style>
+    """
+
+
+def fortschritt_diagramm_svg(uebung_name: str) -> str:
+    """Höchstes Gewicht pro Trainingstag der gewählten Übung (letzte 12 Tage mit Training)."""
+    alle = csv_laden(TRAINING_CSV, TRAINING_SPALTEN)
+    verlauf = (alle[alle["Uebung"] == uebung_name].groupby("Datum")["Gewicht_kg"].max()
+               .sort_index().tail(12))
+    if len(verlauf) < 2:
+        return ""
+    werte, tage = verlauf.astype(float).tolist(), verlauf.index.tolist()
+    kleinster, groesster = min(werte), max(werte)
+    spanne = (groesster - kleinster) or 1
+    breite, hoehe, rand_links, rand_rechts, oben, unten = 320, 150, 40, 12, 14, 26
+    zeichen_breite = breite - rand_links - rand_rechts
+    zeichen_hoehe = hoehe - oben - unten
+    punkte = [(rand_links + i * zeichen_breite / (len(werte) - 1),
+               oben + (1 - (w - kleinster) / spanne) * zeichen_hoehe) for i, w in enumerate(werte)]
+    linie = " ".join(f"{x:.1f},{y:.1f}" for x, y in punkte)
+    kreise = "".join(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3" fill="{AKZENT}"/>' for x, y in punkte)
+    datum_kurz = lambda iso: f"{iso[8:10]}.{iso[5:7]}."
+    beschriftung = 'style="fill: var(--grau); font-size: 11px;"'
+    return (
+        f'<svg viewBox="0 0 {breite} {hoehe}" style="width:100%;height:auto;display:block" '
+        f'role="img" aria-label="Gewichtsverlauf {html.escape(uebung_name)}">'
+        f'<text x="0" y="{oben + 4}" {beschriftung}>{zahl_format(groesster)} kg</text>'
+        f'<text x="0" y="{oben + zeichen_hoehe + 4}" {beschriftung}>{zahl_format(kleinster)} kg</text>'
+        f'<polyline points="{linie}" fill="none" stroke="{AKZENT}" stroke-width="2.5" '
+        f'stroke-linecap="round" stroke-linejoin="round"/>{kreise}'
+        f'<text x="{rand_links}" y="{hoehe - 6}" {beschriftung}>{datum_kurz(tage[0])}</text>'
+        f'<text x="{breite - rand_rechts}" y="{hoehe - 6}" text-anchor="end" {beschriftung}>'
+        f'{datum_kurz(tage[-1])}</text></svg>')
+
+
+def auf_scheiben_runden(gewicht_kg: float) -> float:
+    """Rundet auf 2,5-kg-Schritte, wie man sie an Geräten und Hanteln einstellt."""
+    return round(gewicht_kg / 2.5) * 2.5
 
 
 def verlaufslinie_svg(werte: list) -> str:
@@ -714,16 +845,31 @@ with st.container(key="kopfzeile"):
     with spalte_modus:
         st.toggle("Hell", key="light_mode", on_change=einstellungen_speichern)
 
-st.markdown(f'<p class="titel">{st.session_state["bereich"]}</p>', unsafe_allow_html=True)
-segment_control(["Training", "Körperdaten"], "bereich", "reiter")
+# Breites iOS-Auswahlmenü ganz oben (ersetzt Titel und Gruppen-Tabs)
+REITER_TRAINING, REITER_KOERPER = "🏋️‍♂️ Training", "📊 Körperdaten"
+if st.session_state["bereich"] not in (REITER_TRAINING, REITER_KOERPER):
+    st.session_state["bereich"] = REITER_TRAINING
+segment_control([REITER_TRAINING, REITER_KOERPER], "bereich", "reiter")
 
 # ===============================================================
-# 13) REITER: TRAINING
+# 13) REITER: TRAINING  (jedes Element = eigene Kachel)
 # ===============================================================
-if st.session_state["bereich"] == "Training":
+if st.session_state["bereich"] == REITER_TRAINING:
     aktuelle_uebung = UEBUNG_NACH_NAME[st.session_state["aktuelle_uebung"]]
 
-    # Foto der Maschine (komplett sichtbar)
+    # Kachel 1: Übung wählen (alle Übungen, voll ausgeschrieben)
+    with st.container(key="karte_auswahl"):
+        st.markdown('<p class="feld-label">Übung wählen</p>', unsafe_allow_html=True)
+        st.session_state["uebung_auswahl"] = st.session_state["aktuelle_uebung"]
+
+        def chip_text(name: str) -> str:
+            fertig = saetze_erledigt(heute_df, name) >= UEBUNG_NACH_NAME[name]["saetze"]
+            return f"✓ {name}" if fertig else name
+
+        st.pills("Übung", [u["name"] for u in ALLE_UEBUNGEN], key="uebung_auswahl", format_func=chip_text,
+                 on_change=bei_uebung_angetippt, label_visibility="collapsed")
+
+    # Kachel 2: Foto der Maschine – immer komplett sichtbar
     bild_pfad = bild_pfad_finden(aktuelle_uebung)
     if bild_pfad:
         st.markdown(f'<div class="foto">{bild_als_html(bild_pfad)}</div>', unsafe_allow_html=True)
@@ -731,33 +877,46 @@ if st.session_state["bereich"] == "Training":
         st.markdown(f'<div class="foto"><div class="foto-leer">{icon_html(ICON_HANTEL, "icon-gross")}'
                     f'{foto_fehlt_hinweis(aktuelle_uebung)}</div></div>', unsafe_allow_html=True)
 
-    # Kachel: Übung wählen
-    with st.container(key="karte_auswahl"):
-        segment_control(GRUPPEN, "gruppe", "gruppen_auswahl")
-        uebungen_der_gruppe = [u["name"] for u in ALLE_UEBUNGEN if u["gruppe"] == st.session_state["gruppe"]]
-        st.session_state["uebung_auswahl"] = (st.session_state["aktuelle_uebung"]
-                                              if st.session_state["aktuelle_uebung"] in uebungen_der_gruppe else None)
+    # Kachel 3: Name & Ziel
+    satz_nummer = min(saetze_erledigt(heute_df, aktuelle_uebung["name"]) + 1, aktuelle_uebung["saetze"])
+    tag_text = f' · {aktuelle_uebung["tag"]}' if aktuelle_uebung.get("tag") else ""
+    st.markdown(f'<div class="karte"><p class="kopf-label">{icon_html(ICON_HANTEL)}{aktuelle_uebung["gruppe"]}{tag_text}</p>'
+                f'<p class="kopf-name">{html.escape(aktuelle_uebung["name"])}</p>'
+                f'<p class="kopf-ziel">Satz {satz_nummer} von {aktuelle_uebung["saetze"]} · '
+                f'Ziel {aktuelle_uebung["wdh"]} Wiederholungen</p></div>', unsafe_allow_html=True)
 
-        def chip_text(name: str) -> str:
-            fertig = saetze_erledigt(heute_df, name) >= UEBUNG_NACH_NAME[name]["saetze"]
-            return f"✓ {name}" if fertig else name
-
-        st.pills("Übung", uebungen_der_gruppe, key="uebung_auswahl", format_func=chip_text,
-                 on_change=bei_uebung_angetippt, label_visibility="collapsed")
-
-    # Kachel: Satz eintragen
-    with st.container(key="karte_satz"):
-        satz_nummer = min(saetze_erledigt(heute_df, aktuelle_uebung["name"]) + 1, aktuelle_uebung["saetze"])
-        tag_text = f' · {aktuelle_uebung["tag"]}' if aktuelle_uebung.get("tag") else ""
-        st.markdown(f'<p class="kopf-label">{icon_html(ICON_HANTEL)}{aktuelle_uebung["gruppe"]}{tag_text}</p>'
-                    f'<p class="kopf-name">{html.escape(aktuelle_uebung["name"])}</p>'
-                    f'<p class="kopf-ziel">Satz {satz_nummer} von {aktuelle_uebung["saetze"]} · '
-                    f'Ziel {aktuelle_uebung["wdh"]} Wiederholungen</p>', unsafe_allow_html=True)
-        trennlinie()
+    # Kachel 4 + 5: Gewicht und Wiederholungen (−  Zahl  + in einer Linie)
+    with st.container(key="karte_gewicht_stepper"):
         stepper("gewicht", "Gewicht", "kg", schritt=2.5, minimum=0, maximum=500)
-        trennlinie()
+    with st.container(key="karte_wdh_stepper"):
         stepper("wiederholungen", "Wiederholungen", "", schritt=1, minimum=1, maximum=100)
-        st.button("Satz speichern", key="speichern_satz", on_click=bei_satz_speichern)
+
+    st.button("Satz speichern", key="speichern_satz", on_click=bei_satz_speichern)
+
+    # FEATURE 1: Satzpausen-Timer (läuft im Browser, kein Neuladen der App)
+    if "pause_start" in st.session_state:
+        with st.container(key="karte_pause"):
+            components.html(pausentimer_html(st.session_state["pause_start"], farben), height=44)
+
+    # FEATURE 3: 1RM & Trainingszonen (Epley-Formel)
+    with st.expander("💡 Trainings-Zonen Berechnen"):
+        test_gewicht = float(st.session_state["gewicht"])
+        test_wdh = int(round(st.session_state["wiederholungen"]))
+        if test_gewicht <= 0:
+            st.markdown('<p class="hinweis">Stell oben ein Gewicht ein, dann erscheinen hier deine Zonen.</p>',
+                        unsafe_allow_html=True)
+        else:
+            maximalkraft = test_gewicht * (1 + test_wdh / 30)
+            st.markdown(f"""
+            <table class="zonen">
+              <tr><td>Maximalkraft (1RM)<small>100 %</small></td><td>{zahl_format(auf_scheiben_runden(maximalkraft))} kg</td></tr>
+              <tr><td>Muskelaufbau<small>75 % · ca. 8–12 Wiederholungen</small></td>
+                  <td>{zahl_format(auf_scheiben_runden(maximalkraft * 0.75))} kg</td></tr>
+              <tr><td>Kraftausdauer<small>60 % · ca. 15–20 Wiederholungen</small></td>
+                  <td>{zahl_format(auf_scheiben_runden(maximalkraft * 0.60))} kg</td></tr>
+            </table>
+            <p class="hinweis">Basis: {zahl_format(test_gewicht)} kg × {test_wdh} Wiederholungen ·
+               gerundet auf 2,5-kg-Schritte</p>""", unsafe_allow_html=True)
 
     # Kachel: Zusammenfassung
     geplant = sum(u["saetze"] for u in ALLE_UEBUNGEN)
@@ -799,6 +958,15 @@ if st.session_state["bereich"] == "Training":
         st.markdown(f'<div class="widgets">{widgets_html}</div>', unsafe_allow_html=True)
         st.button("Letzten Satz löschen", key="letzten_loeschen", on_click=bei_letzten_satz_loeschen)
 
+    # FEATURE 2: Progressive Overload – Gewichtsverlauf der gewählten Übung
+    st.markdown('<p class="abschnitt">Fortschritt</p>', unsafe_allow_html=True)
+    diagramm = fortschritt_diagramm_svg(aktuelle_uebung["name"])
+    inhalt = diagramm or ('<p class="unterzeile">Sobald du diese Übung an zwei verschiedenen Tagen '
+                          'trainiert hast, erscheint hier dein Verlauf.</p>')
+    st.markdown(f'<div class="karte"><div class="karte-kopf"><span class="karte-label">'
+                f'{html.escape(aktuelle_uebung["name"])}</span><span class="karte-zeit">Höchstes Gewicht pro Tag'
+                f'</span></div>{inhalt}</div>', unsafe_allow_html=True)
+
 # ===============================================================
 # 14) REITER: KÖRPERDATEN
 # ===============================================================
@@ -830,11 +998,8 @@ else:
 
     # Kachel: Gewicht eintragen
     with st.container(key="karte_gewicht"):
-        st.markdown('<p class="kopf-name">Gewicht eintragen</p>'
-                    '<p class="kopf-ziel">Am besten morgens, nüchtern</p>', unsafe_allow_html=True)
-        trennlinie()
         stepper("koerpergewicht", "Körpergewicht", "kg", schritt=0.1, minimum=30, maximum=300, nachkomma=1)
-        st.button("Gewicht speichern", key="speichern_gewicht", on_click=bei_koerpergewicht_speichern)
+    st.button("Gewicht speichern", key="speichern_gewicht", on_click=bei_koerpergewicht_speichern)
 
     # Kachel: Kalorienbedarf (nur das Ergebnis)
     st.markdown('<p class="abschnitt">Kalorienbedarf</p>', unsafe_allow_html=True)
@@ -864,6 +1029,6 @@ else:
                         {"key": "groesse", "label": "Größe", "min": 140, "max": 220, "einheit": "cm",
                          "wert": int(st.session_state["groesse"])},
                     ])
-        trennlinie()
+    with st.container(key="karte_aktivitaet"):
         st.markdown('<p class="feld-label">Aktivität</p>', unsafe_allow_html=True)
         segment_control(list(PAL_STUFEN), "pal_stufe", "pal_auswahl", bei_aenderung=einstellungen_speichern)
