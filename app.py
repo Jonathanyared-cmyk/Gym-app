@@ -349,8 +349,15 @@ html, body, .stApp, .stApp * {{
 [data-testid="stSidebar"], [data-testid="collapsedControl"], [data-testid="stHeader"] {{ display: none !important; }}
 .stApp {{ background: var(--bg); }}
 .stApp p, .stApp span, .stApp div, .stApp label {{ color: var(--text); }}
-.block-container {{ max-width: 520px; padding: 12px 16px 64px !important; }}
-[data-testid="stVerticalBlock"] {{ gap: 16px; }}
+.block-container {{ max-width: 520px; padding: 16px 16px 64px !important; }}
+[data-testid="stVerticalBlock"] {{ gap: 16px !important; }}
+[data-testid="stElementContainer"] p {{ margin: 0; }}
+
+/* ---------- Kein Text wird abgeschnitten (nie "..."), Schrift passt sich an ---------- */
+.stApp button p, .stApp button span, .widget-name, .kopf-name, .kopf-ziel {{
+    white-space: normal !important; word-break: keep-all; overflow-wrap: anywhere;
+    overflow: visible !important; text-overflow: clip !important;
+}}
 iframe {{ border: none; display: block; }}
 button {{ touch-action: manipulation; -webkit-tap-highlight-color: transparent; }}
 
@@ -358,20 +365,21 @@ button {{ touch-action: manipulation; -webkit-tap-highlight-color: transparent; 
 .datum {{ color: var(--grau) !important; font-size: 13px; font-weight: 600; letter-spacing: .04em;
           text-transform: uppercase; margin: 0; }}
 .titel {{ font-size: 34px; font-weight: 700; letter-spacing: -.025em; margin: 0; line-height: 1.15; }}
-.abschnitt {{ font-size: 20px; font-weight: 700; letter-spacing: -.01em; margin: 12px 4px -4px; }}
+.abschnitt {{ font-size: 20px; font-weight: 700; letter-spacing: -.01em; margin: 0 !important; }}
 [data-testid="stToggle"] label p, [data-testid="stCheckbox"] label p {{ color: var(--grau) !important; font-size: 14px !important; }}
 .st-key-kopfzeile [data-testid="stHorizontalBlock"] {{ flex-wrap: nowrap !important; align-items: center; }}
 .st-key-kopfzeile [data-testid="stColumn"] {{ min-width: 0 !important; }}
 .st-key-kopfzeile [data-testid="stColumn"]:last-child {{ flex: 0 0 auto !important; width: auto !important; }}
 
-/* ---------- Kacheln: einheitlich 16px Radius, 20px Innenabstand ---------- */
+/* ---------- Kacheln: einheitlich 16px Radius, 16px Innenabstand ---------- */
 [class*="st-key-karte"], .karte {{
-    background: var(--karte); border-radius: 16px; padding: 20px; box-shadow: var(--schatten);
+    background: var(--karte); border-radius: 16px; padding: 16px !important; margin: 0 !important;
+    box-shadow: var(--schatten);
 }}
-[class*="st-key-karte"] [data-testid="stVerticalBlock"] {{ gap: 12px; }}
-.kopf-label {{ color: var(--akzent) !important; font-size: 14px; font-weight: 600; margin: 0; }}
-.kopf-name {{ font-size: 22px; font-weight: 700; letter-spacing: -.01em; margin: 2px 0 0; line-height: 1.25; }}
-.kopf-ziel {{ color: var(--grau) !important; font-size: 15px; margin: 2px 0 0; }}
+[class*="st-key-karte"] [data-testid="stVerticalBlock"] {{ gap: 16px !important; }}
+.kopf-label {{ color: var(--akzent) !important; font-size: 14px; font-weight: 600; margin: 0 0 4px !important; }}
+.kopf-name {{ font-size: clamp(18px, 5.5vw, 22px); font-weight: 700; letter-spacing: -.01em; line-height: 1.25; }}
+.kopf-ziel {{ color: var(--grau) !important; font-size: 15px; margin: 4px 0 0 !important; }}
 .trennlinie {{ height: 1px; background: var(--linie); }}
 .feld-label {{ color: var(--grau) !important; font-size: 13px; margin: 0; }}
 
@@ -381,7 +389,7 @@ button {{ touch-action: manipulation; -webkit-tap-highlight-color: transparent; 
     background-color: currentColor;
     -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat;
 }}
-.icon-gross {{ width: 56px; height: 56px; margin: 0; }}
+.icon-gross {{ width: 48px; height: 48px; margin: 0; }}
 
 /* ---------- iOS-Segmented-Control ---------- */
 [class*="st-key-segment"] [data-testid="stButtonGroup"],
@@ -391,29 +399,28 @@ button {{ touch-action: manipulation; -webkit-tap-highlight-color: transparent; 
     background: var(--segment); border-radius: 10px; padding: 2px;
 }}
 [class*="st-key-segment"] button {{
-    flex: 1 1 0 !important; min-width: 0 !important; height: 36px; border: none !important;
+    flex: 1 1 0 !important; min-width: 0 !important; min-height: 40px; height: auto !important;
+    padding: 6px 8px !important; border: none !important;
     border-radius: 8px !important; background: transparent !important; box-shadow: none !important;
     transition: background .2s ease;
 }}
-[class*="st-key-segment"] button p {{ color: var(--text) !important; font-size: 14px !important; font-weight: 500 !important;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+[class*="st-key-segment"] button p {{ color: var(--text) !important; font-size: clamp(14px, 4vw, 17px) !important;
+    font-weight: 500 !important; line-height: 1.2; text-align: center; }}
 [class*="st-key-segment"] button[kind$="Active"], [class*="st-key-segment"] button[data-testid$="Active"] {{
     background: var(--segment-an) !important; box-shadow: 0 1px 4px rgba(0,0,0,.15) !important; }}
 [class*="st-key-segment"] button[kind$="Active"] p,
 [class*="st-key-segment"] button[data-testid$="Active"] p {{ font-weight: 600 !important; }}
-.st-key-segment_reiter button:first-of-type p::before {{
-    content: ""; display: inline-block; width: 1.15em; height: 1.15em; margin-right: 6px; vertical-align: -0.22em;
-    background-color: var(--text);
-    -webkit-mask: url("{ICON_HANTEL}") center / contain no-repeat; mask: url("{ICON_HANTEL}") center / contain no-repeat;
-}}
+.st-key-segment_reiter button {{ min-height: 48px; }}
 
 /* ---------- Übungs-Chips ---------- */
 .st-key-uebung_auswahl [data-testid="stButtonGroup"] > div > div {{ flex-wrap: wrap !important; gap: 8px !important; }}
 .st-key-uebung_auswahl button {{
-    min-height: 44px; padding: 0 16px !important; border: none !important; border-radius: 22px !important;
+    min-height: 44px; height: auto !important; max-width: 100%; padding: 8px 16px !important;
+    border: none !important; border-radius: 22px !important;
     background: var(--feld) !important; box-shadow: none !important;
 }}
-.st-key-uebung_auswahl button p {{ color: var(--text) !important; font-size: 15px !important; }}
+.st-key-uebung_auswahl button p {{ color: var(--text) !important; font-size: clamp(14px, 4vw, 17px) !important;
+    line-height: 1.25; text-align: left; }}
 .st-key-uebung_auswahl button[kind$="Active"], .st-key-uebung_auswahl button[data-testid$="Active"] {{
     background: var(--text) !important; }}
 .st-key-uebung_auswahl button[kind$="Active"] p,
@@ -433,9 +440,11 @@ button {{ touch-action: manipulation; -webkit-tap-highlight-color: transparent; 
 .st-key-letzten_loeschen button p {{ color: var(--grau) !important; font-size: 15px !important; }}
 
 /* ---------- Maschinenfoto: komplett sichtbar ---------- */
-.foto {{ height: 300px; border-radius: 20px; overflow: hidden; background: var(--karte); padding: 12px;
-         box-shadow: var(--schatten); display: grid; place-items: center; }}
-.foto img {{ width: 100%; height: 100%; object-fit: contain; display: block; border-radius: 12px; }}
+.foto {{ width: 100%; height: 220px; max-height: 220px; border-radius: 16px; overflow: hidden;
+         background-color: var(--karte); padding: 16px; box-shadow: var(--schatten);
+         display: flex; align-items: center; justify-content: center; }}
+.foto img {{ width: 100%; height: 100%; max-height: 188px; object-fit: contain !important;
+             background-color: var(--karte); display: block; }}
 .foto-leer {{ display: grid; justify-items: center; gap: 10px; color: var(--grau) !important;
               font-size: 13px; text-align: center; line-height: 1.5; }}
 
