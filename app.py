@@ -10,7 +10,9 @@ import html
 import json
 import os
 import re
+import unicodedata
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -55,11 +57,11 @@ AKTIVITAETS_STUFEN = {
 # ---------------------------------------------------------------
 # Dateien
 # ---------------------------------------------------------------
-APP_ORDNER = os.path.dirname(os.path.abspath(__file__))
-BILDER_ORDNER = os.path.join(APP_ORDNER, "bilder")
-TRAINING_CSV = os.path.join(APP_ORDNER, "trainingsdaten.csv")
-GEWICHT_CSV = os.path.join(APP_ORDNER, "weight_data.csv")
-EINSTELLUNGEN_DATEI = os.path.join(APP_ORDNER, "einstellungen.json")
+APP_ORDNER = Path(__file__).resolve().parent
+BILDER_ORDNER = APP_ORDNER / "bilder"
+TRAINING_CSV = APP_ORDNER / "trainingsdaten.csv"
+GEWICHT_CSV = APP_ORDNER / "weight_data.csv"
+EINSTELLUNGEN_DATEI = APP_ORDNER / "einstellungen.json"
 TRAINING_SPALTEN = ["Datum", "Uhrzeit", "Gruppe", "Uebung", "Gewicht_kg", "Wiederholungen"]
 GEWICHT_SPALTEN = ["Datum", "Uhrzeit", "Gewicht_kg"]
 BILD_ENDUNGEN = {".jpg": "jpeg", ".jpeg": "jpeg", ".png": "png", ".webp": "webp"}
@@ -276,7 +278,8 @@ def tausender(wert: float) -> str:
 
 def vergleichs_name(text: str) -> str:
     """'Bizepscurls am Kabelturm' -> 'bizepscurlsamkabelturm'"""
-    text = text.lower()
+    # NFC: macOS/Git speichern "ü" oft als "u" + Pünktchen-Zeichen -> wieder zu einem "ü" machen
+    text = unicodedata.normalize("NFC", text).lower()
     for umlaut, ersatz in (("ä", "ae"), ("ö", "oe"), ("ü", "ue"), ("ß", "ss")):
         text = text.replace(umlaut, ersatz)
     return re.sub(r"[^a-z0-9]", "", text)
@@ -289,24 +292,45 @@ def beispiel_dateiname(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", ohne_klammer).strip("_") + ".jpg"
 
 
+def bilder_ordner_finden():
+    """Findet den Bilder-Ordner neben app.py – auch wenn er 'Bilder' oder 'BILDER' heißt.
+    (Die Cloud läuft auf Linux: dort ist Groß-/Kleinschreibung wichtig, auf Windows nicht.)"""
+    if BILDER_ORDNER.is_dir():
+        return BILDER_ORDNER
+    for ordner in APP_ORDNER.iterdir():
+        if ordner.is_dir() and ordner.name.lower() == "bilder":
+            return ordner
+    return None
+
+
 def bild_pfad_finden(uebung: dict):
-    """Sucht im Ordner 'bilder' ein Foto, dessen Name zur Übung passt."""
-    if not os.path.isdir(BILDER_ORDNER):
+    """Sucht im Bilder-Ordner ein Foto, dessen Name zur Übung passt."""
+    ordner = bilder_ordner_finden()
+    if ordner is None:
         return None
     gesuchte_namen = [uebung["name"], re.sub(r"\(.*?\)", "", uebung["name"])] + uebung.get("bildnamen", [])
     gesuchte_namen = {vergleichs_name(name) for name in gesuchte_namen}
-    for dateiname in sorted(os.listdir(BILDER_ORDNER)):
-        stamm, endung = os.path.splitext(dateiname)
-        if endung.lower() in BILD_ENDUNGEN and vergleichs_name(stamm) in gesuchte_namen:
-            return os.path.join(BILDER_ORDNER, dateiname)
+    for datei in sorted(ordner.iterdir()):
+        if datei.suffix.lower() in BILD_ENDUNGEN and vergleichs_name(datei.stem) in gesuchte_namen:
+            return str(datei)
     return None
+
+
+def foto_fehlt_hinweis(uebung: dict) -> str:
+    """Erklärt in der Bild-Kachel, warum kein Foto angezeigt wird."""
+    ordner = bilder_ordner_finden()
+    if ordner is None:
+        return "Ordner „bilder“ nicht gefunden.<br>Er muss im Repository direkt neben app.py liegen."
+    anzahl = sum(1 for datei in ordner.iterdir() if datei.suffix.lower() in BILD_ENDUNGEN)
+    return (f"Kein passendes Foto ({anzahl} Bilder im Ordner).<br>"
+            f"Erwartet: bilder/{beispiel_dateiname(uebung['name'])}")
 
 
 @st.cache_data
 def bild_als_html(pfad: str) -> str:
-    with open(pfad, "rb") as datei:
-        daten = base64.b64encode(datei.read()).decode()
-    bildtyp = BILD_ENDUNGEN[os.path.splitext(pfad)[1].lower()]
+    datei = Path(pfad)
+    daten = base64.b64encode(datei.read_bytes()).decode()
+    bildtyp = BILD_ENDUNGEN[datei.suffix.lower()]
     return f'<img src="data:image/{bildtyp};base64,{daten}" alt="">'
 
 
@@ -468,9 +492,8 @@ with reiter_training:
     if bild_pfad:
         st.markdown(f'<div class="foto">{bild_als_html(bild_pfad)}</div>', unsafe_allow_html=True)
     else:
-        st.markdown(f'<div class="foto"><div class="foto-leer"><b>+</b>Kein Foto gefunden.<br>'
-                    f'Lege es ab als bilder/{beispiel_dateiname(aktuelle_uebung["name"])}</div></div>',
-                    unsafe_allow_html=True)
+        st.markdown(f'<div class="foto"><div class="foto-leer"><b>+</b>'
+                    f'{foto_fehlt_hinweis(aktuelle_uebung)}</div></div>', unsafe_allow_html=True)
 
     def anzeige_name(name: str) -> str:
         uebung = UEBUNG_NACH_NAME[name]
