@@ -71,10 +71,12 @@ st.markdown("""
     --schwarz: #000000;
     --kachel: #1C1C1E;
     --feld: #2C2C2E;
-    --linie: #38383A;
+    --trennlinie: #38383A;
     --weiss: #FFFFFF;
-    --hellgrau: #8E8E93;
+    --grau: #8E8E93;
     --rot: #FF2D55;
+    --apple-schrift: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+                     "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif;
 }
 
 /* ---------- Grundlagen ---------- */
@@ -84,24 +86,28 @@ footer {visibility: hidden;}
 [data-testid="stDecoration"], [data-testid="stToolbar"] {display: none !important;}
 
 .stApp {background-color: var(--schwarz) !important;}
-.block-container {max-width: 560px; padding: 1.5rem 16px 3rem !important;}
-[data-testid="stVerticalBlock"] {gap: 16px;}
+.block-container {max-width: 560px; padding: 1.25rem 16px 3rem !important;}
+[data-testid="stVerticalBlock"] {gap: 12px;}
+[data-testid="stHorizontalBlock"] {gap: 12px;}
 
-/* Apple-Systemschrift für alle Texte (Icons bleiben unberührt) */
+/* Keine Schatten, keine Rahmen – Apple Health ist flach */
+.stApp *:not(svg):not(path) {box-shadow: none !important;}
+
+/* SF-Pro-Schrift für alle Texte (Icons bleiben unberührt) */
 .stApp, .stApp p, .stApp label, .stApp input, .stApp button, .stApp h1, .stApp h2, .stApp h3,
-.stApp li, [data-testid="stMarkdownContainer"], [data-baseweb="select"] div {
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
-                 "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif !important;
+.stApp li, [data-testid="stMarkdownContainer"], [data-baseweb="select"] div,
+[data-testid="stMetricValue"], [data-testid="stMetricValue"] div {
+    font-family: var(--apple-schrift) !important;
     -webkit-font-smoothing: antialiased;
 }
 
-/* Überschriften wie in Apple Health */
+/* Überschriften: groß und fett wie "Zusammenfassung" in Apple Health */
 .stApp h1 {color: var(--weiss) !important; font-size: 34px !important; font-weight: 700 !important;
-           letter-spacing: -0.02em; padding: 0 0 4px !important;}
+           letter-spacing: -0.02em; padding: 0 0 8px !important;}
 .stApp h2, .stApp h3 {color: var(--weiss) !important; font-size: 22px !important; font-weight: 700 !important;
-                      padding: 8px 0 0 !important;}
+                      letter-spacing: -0.01em; padding: 12px 0 0 !important;}
 
-/* Texte: immer voll ausgeschrieben, nie "..." und nie mitten im Wort getrennt */
+/* Texte immer voll ausgeschrieben – nie "...", nie mitten im Wort getrennt */
 .stApp p, .stApp label, .stApp span, [data-testid="stMetricLabel"] *, [data-testid="stCaptionContainer"] * {
     white-space: normal !important;
     overflow: visible !important;
@@ -109,101 +115,112 @@ footer {visibility: hidden;}
     word-break: normal !important;
     overflow-wrap: break-word !important;
 }
-[data-testid="stWidgetLabel"] p, .stApp label p {
-    color: var(--hellgrau) !important; font-size: 15px !important; font-weight: 500 !important;
-}
-[data-testid="stCaptionContainer"] p {color: var(--hellgrau) !important; font-size: 14px !important;}
 
-/* ---------- Kacheln: Auswahlboxen ---------- */
+/* Labels: klein, clean, Apple-Grau */
+[data-testid="stWidgetLabel"] p, .stApp label p {
+    color: var(--grau) !important; font-size: 13px !important; font-weight: 500 !important;
+    letter-spacing: 0.01em;
+}
+[data-testid="stCaptionContainer"] p {color: var(--grau) !important; font-size: 13px !important;}
+
+/* ---------- Auswahlboxen: natives iOS-Menü ---------- */
 [data-testid="stSelectbox"] {
-    background: var(--kachel); border-radius: 16px !important; padding: 16px;
+    background: var(--kachel); border-radius: 12px !important; padding: 12px 16px;
 }
 [data-baseweb="select"] > div {
-    background: var(--feld) !important; border: none !important; border-radius: 12px !important;
-    min-height: 50px; height: auto !important;
+    background: var(--kachel) !important; border: none !important; border-radius: 12px !important;
+    min-height: 44px; height: auto !important; padding-left: 0 !important;
 }
-[data-baseweb="select"] > div > div {padding-top: 8px; padding-bottom: 8px;}
-[data-baseweb="select"] div {color: var(--weiss) !important; font-size: 17px !important;
+[data-baseweb="select"] > div > div:first-child {padding-left: 0 !important;}
+[data-baseweb="select"] div {color: var(--weiss) !important; font-size: 17px !important; font-weight: 600 !important;
     white-space: normal !important; overflow: visible !important; text-overflow: clip !important;}
-[data-baseweb="select"] svg {fill: var(--hellgrau) !important; color: var(--hellgrau) !important;}
-[data-baseweb="popover"] ul, [data-baseweb="popover"] li {background: var(--kachel) !important;}
-[data-baseweb="popover"] li {color: var(--weiss) !important; font-size: 17px !important;
-    white-space: normal !important; min-height: 48px;}
+[data-baseweb="select"] svg {fill: var(--grau) !important; color: var(--grau) !important;}
+[data-baseweb="popover"] > div, [data-baseweb="popover"] ul {
+    background: var(--kachel) !important; border: none !important; border-radius: 12px !important;
+}
+[data-baseweb="popover"] li {
+    background: var(--kachel) !important; color: var(--weiss) !important; font-size: 17px !important;
+    white-space: normal !important; min-height: 48px; border-bottom: 0.5px solid var(--trennlinie);
+}
+[data-baseweb="popover"] li:last-child {border-bottom: none;}
 [data-baseweb="popover"] li:hover, [data-baseweb="popover"] li[aria-selected="true"] {background: var(--feld) !important;}
 
-/* ---------- Kacheln: Formulare (Satz / Gewicht) ---------- */
+/* ---------- Formulare als flache Kacheln ---------- */
 [data-testid="stForm"] {
     background: var(--kachel) !important; border: none !important;
-    border-radius: 16px !important; padding: 16px !important;
+    border-radius: 12px !important; padding: 16px !important;
 }
 
-/* Zahlenfelder: anthrazit, groß, gut tippbar */
-[data-testid="stNumberInput"] input {
-    background: var(--feld) !important; color: var(--weiss) !important; -webkit-text-fill-color: var(--weiss);
-    font-size: 20px !important; font-weight: 500; height: 50px; border: none !important;
-}
+/* Zahlenfelder: Wert groß, fett, weiß und mittig */
 [data-testid="stNumberInput"] > div > div {
     background: var(--feld) !important; border: none !important; border-radius: 12px !important; overflow: hidden;
+}
+[data-testid="stNumberInput"] input {
+    background: var(--feld) !important; border: none !important; height: 56px;
+    color: var(--weiss) !important; -webkit-text-fill-color: var(--weiss);
+    font-size: 28px !important; font-weight: 700 !important; text-align: center;
+    font-variant-numeric: tabular-nums;
 }
 [data-testid="stNumberInput"] button {
     background: var(--feld) !important; border: none !important; color: var(--weiss) !important; min-width: 44px;
 }
-[data-testid="stNumberInput"] button:hover {background: var(--linie) !important;}
+[data-testid="stNumberInput"] button:hover {background: var(--trennlinie) !important;}
 
-/* Zahlenfelder außerhalb eines Formulars (Alter, Größe) bekommen eine eigene Kachel */
+/* Zahlenfelder außerhalb eines Formulars (Alter, Größe) = eigene Kachel */
 [data-testid="stNumberInput"]:not([data-testid="stForm"] [data-testid="stNumberInput"]) {
-    background: var(--kachel); border-radius: 16px !important; padding: 16px;
+    background: var(--kachel); border-radius: 12px !important; padding: 12px 16px 16px;
 }
 
 /* ---------- Speicher-Button: flach, breit, Apple-Rot ---------- */
 [data-testid="stFormSubmitButton"], [data-testid="stFormSubmitButton"] > div {width: 100% !important;}
 [data-testid="stFormSubmitButton"] button {
-    width: 100% !important; height: 52px; margin-top: 4px;
-    background: var(--rot) !important; border: none !important; border-radius: 14px !important;
-    box-shadow: none !important; transition: transform 0.1s ease, opacity 0.1s ease;
+    width: 100% !important; height: 50px; margin-top: 4px;
+    background: var(--rot) !important; border: none !important; border-radius: 12px !important;
+    transition: transform 0.1s ease, opacity 0.1s ease;
 }
 [data-testid="stFormSubmitButton"] button p {color: var(--weiss) !important; font-size: 17px !important;
-                                             font-weight: 600 !important;}
-[data-testid="stFormSubmitButton"] button:active {transform: scale(0.97); opacity: 0.9;}
+                                             font-weight: 700 !important;}
+[data-testid="stFormSubmitButton"] button:hover {opacity: 0.92;}
+[data-testid="stFormSubmitButton"] button:active {transform: scale(0.97); opacity: 0.85;}
 
-/* Zweitrangige Buttons ("Letzten Satz löschen") dezent */
-.stButton button {
-    background: transparent !important; border: none !important; box-shadow: none !important;
-    padding: 8px 0 !important; min-height: 44px;
-}
-.stButton button p {color: var(--hellgrau) !important; font-size: 15px !important;}
+/* Zweitrangiger Button ("Letzten Satz löschen") als schlichter Textlink */
+.stButton button {background: transparent !important; border: none !important; padding: 8px 0 !important; min-height: 44px;}
+.stButton button p {color: var(--rot) !important; font-size: 15px !important; font-weight: 400 !important;}
 
-/* ---------- Kacheln: Kennzahlen (st.metric) ---------- */
+/* ---------- Kennzahlen wie "Schritte" in Apple Health ---------- */
 [data-testid="stMetric"] {
-    background: var(--kachel); border-radius: 16px !important; padding: 16px !important;
+    background: var(--kachel); border-radius: 12px !important; padding: 16px !important; text-align: center;
 }
-[data-testid="stMetricLabel"] p {color: var(--hellgrau) !important; font-size: 15px !important; font-weight: 500 !important;}
-[data-testid="stMetricValue"] {color: var(--weiss) !important; font-size: 32px !important; font-weight: 600 !important;
-                               font-variant-numeric: tabular-nums;}
-[data-testid="stMetricValue"] div {white-space: normal !important; overflow: visible !important;}
-[data-testid="stMetricDelta"] {color: var(--hellgrau) !important;}
+[data-testid="stMetricLabel"], [data-testid="stMetricLabel"] > div {justify-content: center !important; width: 100%;}
+[data-testid="stMetricLabel"] p {color: var(--grau) !important; font-size: 13px !important; font-weight: 600 !important;
+                                 text-align: center;}
+[data-testid="stMetricValue"], [data-testid="stMetricValue"] > div {
+    justify-content: center !important; text-align: center; width: 100%;
+    color: var(--weiss) !important; font-size: 34px !important; font-weight: 700 !important;
+    letter-spacing: -0.02em; font-variant-numeric: tabular-nums;
+    white-space: normal !important; overflow: visible !important;
+}
+[data-testid="stMetricDelta"] {justify-content: center !important; color: var(--grau) !important;}
+[data-testid="stMetricDelta"] svg {display: none;}
 
-/* ---------- Kachel: Maschinenbild (immer komplett sichtbar) ---------- */
+/* ---------- Maschinenbild: vollständig, verschmilzt mit der Kachel ---------- */
 [data-testid="stImage"], [data-testid="stImageContainer"], .stImage {
-    background: var(--kachel); border-radius: 16px !important; padding: 16px;
+    background-color: var(--kachel) !important; border-radius: 12px !important; padding: 12px;
     display: flex; justify-content: center; overflow: hidden;
 }
 [data-testid="stImage"] img, [data-testid="stImageContainer"] img, .stImage img {
     width: 100% !important; max-height: 260px; object-fit: contain !important;
-    border-radius: 10px;
+    background-color: var(--kachel) !important;
 }
 
-/* ---------- Info- und Erfolgsmeldungen als ruhige Kacheln ---------- */
+/* ---------- Meldungen als ruhige Kacheln ---------- */
 [data-testid="stAlert"] > div, [data-testid="stAlertContainer"] {
-    background: var(--kachel) !important; border: none !important; border-radius: 16px !important;
+    background: var(--kachel) !important; border: none !important; border-radius: 12px !important;
 }
 [data-testid="stAlert"] p {color: var(--weiss) !important; font-size: 15px !important;}
 
 /* ---------- Tabelle "Heute" ---------- */
-[data-testid="stDataFrame"] {border-radius: 16px; overflow: hidden; background: var(--kachel);}
-
-/* Kennzahlen nebeneinander (Sätze / Volumen) dürfen auf dem iPhone nebeneinander bleiben */
-[data-testid="stHorizontalBlock"] {gap: 16px;}
+[data-testid="stDataFrame"] {border-radius: 12px; overflow: hidden; background: var(--kachel); border: none !important;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -323,7 +340,7 @@ if bereich == "🏋️‍♂️ Trainings-Tracker":
                                   value=start_gewicht, step=2.5, key=f"gewicht_{uebung_name}")
         wiederholungen = st.number_input("Wiederholungen", min_value=1, max_value=100,
                                          value=start_wdh, step=1, key=f"wdh_{uebung_name}")
-        gespeichert = st.form_submit_button("Satz speichern", type="primary")
+        gespeichert = st.form_submit_button("Training loggen", type="primary")
 
     if gespeichert:
         jetzt = datetime.now()
