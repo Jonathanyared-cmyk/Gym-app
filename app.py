@@ -60,15 +60,150 @@ BILD_ENDUNGEN = (".jpg", ".jpeg", ".png", ".webp")
 
 st.set_page_config(page_title="Gym Log", page_icon="🏋️", layout="centered")
 
-# Nur das Nötigste an CSS: Menü, Kopfzeile und rote Linie ausblenden, Hintergrund schwarz
+# ---------------------------------------------------------------
+# Apple-Health-Look (nur CSS – die Streamlit-Elemente selbst bleiben unverändert)
+# Jede Regel betrifft nur das Aussehen. Greift eine Regel einmal nicht,
+# sieht das Element nur "normaler" aus – die App funktioniert trotzdem.
+# ---------------------------------------------------------------
 st.markdown("""
 <style>
+:root {
+    --schwarz: #000000;
+    --kachel: #1C1C1E;
+    --feld: #2C2C2E;
+    --linie: #38383A;
+    --weiss: #FFFFFF;
+    --hellgrau: #8E8E93;
+    --rot: #FF2D55;
+}
+
+/* ---------- Grundlagen ---------- */
 #MainMenu {visibility: hidden;}
 header {visibility: hidden;}
 footer {visibility: hidden;}
-[data-testid="stDecoration"] {display: none;}
-.stApp {background-color: #000000;}
-.block-container {padding-top: 1.5rem; padding-bottom: 3rem;}
+[data-testid="stDecoration"], [data-testid="stToolbar"] {display: none !important;}
+
+.stApp {background-color: var(--schwarz) !important;}
+.block-container {max-width: 560px; padding: 1.5rem 16px 3rem !important;}
+[data-testid="stVerticalBlock"] {gap: 16px;}
+
+/* Apple-Systemschrift für alle Texte (Icons bleiben unberührt) */
+.stApp, .stApp p, .stApp label, .stApp input, .stApp button, .stApp h1, .stApp h2, .stApp h3,
+.stApp li, [data-testid="stMarkdownContainer"], [data-baseweb="select"] div {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+                 "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif !important;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* Überschriften wie in Apple Health */
+.stApp h1 {color: var(--weiss) !important; font-size: 34px !important; font-weight: 700 !important;
+           letter-spacing: -0.02em; padding: 0 0 4px !important;}
+.stApp h2, .stApp h3 {color: var(--weiss) !important; font-size: 22px !important; font-weight: 700 !important;
+                      padding: 8px 0 0 !important;}
+
+/* Texte: immer voll ausgeschrieben, nie "..." und nie mitten im Wort getrennt */
+.stApp p, .stApp label, .stApp span, [data-testid="stMetricLabel"] *, [data-testid="stCaptionContainer"] * {
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    word-break: normal !important;
+    overflow-wrap: break-word !important;
+}
+[data-testid="stWidgetLabel"] p, .stApp label p {
+    color: var(--hellgrau) !important; font-size: 15px !important; font-weight: 500 !important;
+}
+[data-testid="stCaptionContainer"] p {color: var(--hellgrau) !important; font-size: 14px !important;}
+
+/* ---------- Kacheln: Auswahlboxen ---------- */
+[data-testid="stSelectbox"] {
+    background: var(--kachel); border-radius: 16px !important; padding: 16px;
+}
+[data-baseweb="select"] > div {
+    background: var(--feld) !important; border: none !important; border-radius: 12px !important;
+    min-height: 50px; height: auto !important;
+}
+[data-baseweb="select"] > div > div {padding-top: 8px; padding-bottom: 8px;}
+[data-baseweb="select"] div {color: var(--weiss) !important; font-size: 17px !important;
+    white-space: normal !important; overflow: visible !important; text-overflow: clip !important;}
+[data-baseweb="select"] svg {fill: var(--hellgrau) !important; color: var(--hellgrau) !important;}
+[data-baseweb="popover"] ul, [data-baseweb="popover"] li {background: var(--kachel) !important;}
+[data-baseweb="popover"] li {color: var(--weiss) !important; font-size: 17px !important;
+    white-space: normal !important; min-height: 48px;}
+[data-baseweb="popover"] li:hover, [data-baseweb="popover"] li[aria-selected="true"] {background: var(--feld) !important;}
+
+/* ---------- Kacheln: Formulare (Satz / Gewicht) ---------- */
+[data-testid="stForm"] {
+    background: var(--kachel) !important; border: none !important;
+    border-radius: 16px !important; padding: 16px !important;
+}
+
+/* Zahlenfelder: anthrazit, groß, gut tippbar */
+[data-testid="stNumberInput"] input {
+    background: var(--feld) !important; color: var(--weiss) !important; -webkit-text-fill-color: var(--weiss);
+    font-size: 20px !important; font-weight: 500; height: 50px; border: none !important;
+}
+[data-testid="stNumberInput"] > div > div {
+    background: var(--feld) !important; border: none !important; border-radius: 12px !important; overflow: hidden;
+}
+[data-testid="stNumberInput"] button {
+    background: var(--feld) !important; border: none !important; color: var(--weiss) !important; min-width: 44px;
+}
+[data-testid="stNumberInput"] button:hover {background: var(--linie) !important;}
+
+/* Zahlenfelder außerhalb eines Formulars (Alter, Größe) bekommen eine eigene Kachel */
+[data-testid="stNumberInput"]:not([data-testid="stForm"] [data-testid="stNumberInput"]) {
+    background: var(--kachel); border-radius: 16px !important; padding: 16px;
+}
+
+/* ---------- Speicher-Button: flach, breit, Apple-Rot ---------- */
+[data-testid="stFormSubmitButton"], [data-testid="stFormSubmitButton"] > div {width: 100% !important;}
+[data-testid="stFormSubmitButton"] button {
+    width: 100% !important; height: 52px; margin-top: 4px;
+    background: var(--rot) !important; border: none !important; border-radius: 14px !important;
+    box-shadow: none !important; transition: transform 0.1s ease, opacity 0.1s ease;
+}
+[data-testid="stFormSubmitButton"] button p {color: var(--weiss) !important; font-size: 17px !important;
+                                             font-weight: 600 !important;}
+[data-testid="stFormSubmitButton"] button:active {transform: scale(0.97); opacity: 0.9;}
+
+/* Zweitrangige Buttons ("Letzten Satz löschen") dezent */
+.stButton button {
+    background: transparent !important; border: none !important; box-shadow: none !important;
+    padding: 8px 0 !important; min-height: 44px;
+}
+.stButton button p {color: var(--hellgrau) !important; font-size: 15px !important;}
+
+/* ---------- Kacheln: Kennzahlen (st.metric) ---------- */
+[data-testid="stMetric"] {
+    background: var(--kachel); border-radius: 16px !important; padding: 16px !important;
+}
+[data-testid="stMetricLabel"] p {color: var(--hellgrau) !important; font-size: 15px !important; font-weight: 500 !important;}
+[data-testid="stMetricValue"] {color: var(--weiss) !important; font-size: 32px !important; font-weight: 600 !important;
+                               font-variant-numeric: tabular-nums;}
+[data-testid="stMetricValue"] div {white-space: normal !important; overflow: visible !important;}
+[data-testid="stMetricDelta"] {color: var(--hellgrau) !important;}
+
+/* ---------- Kachel: Maschinenbild (immer komplett sichtbar) ---------- */
+[data-testid="stImage"], [data-testid="stImageContainer"], .stImage {
+    background: var(--kachel); border-radius: 16px !important; padding: 16px;
+    display: flex; justify-content: center; overflow: hidden;
+}
+[data-testid="stImage"] img, [data-testid="stImageContainer"] img, .stImage img {
+    width: 100% !important; max-height: 260px; object-fit: contain !important;
+    border-radius: 10px;
+}
+
+/* ---------- Info- und Erfolgsmeldungen als ruhige Kacheln ---------- */
+[data-testid="stAlert"] > div, [data-testid="stAlertContainer"] {
+    background: var(--kachel) !important; border: none !important; border-radius: 16px !important;
+}
+[data-testid="stAlert"] p {color: var(--weiss) !important; font-size: 15px !important;}
+
+/* ---------- Tabelle "Heute" ---------- */
+[data-testid="stDataFrame"] {border-radius: 16px; overflow: hidden; background: var(--kachel);}
+
+/* Kennzahlen nebeneinander (Sätze / Volumen) dürfen auf dem iPhone nebeneinander bleiben */
+[data-testid="stHorizontalBlock"] {gap: 16px;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -188,7 +323,7 @@ if bereich == "🏋️‍♂️ Trainings-Tracker":
                                   value=start_gewicht, step=2.5, key=f"gewicht_{uebung_name}")
         wiederholungen = st.number_input("Wiederholungen", min_value=1, max_value=100,
                                          value=start_wdh, step=1, key=f"wdh_{uebung_name}")
-        gespeichert = st.form_submit_button("Satz speichern", type="primary", use_container_width=True)
+        gespeichert = st.form_submit_button("Satz speichern", type="primary")
 
     if gespeichert:
         jetzt = datetime.now()
@@ -215,7 +350,7 @@ if bereich == "🏋️‍♂️ Trainings-Tracker":
 
         anzeige = heutige_saetze.iloc[::-1][["Uhrzeit", "Uebung", "Gewicht_kg", "Wiederholungen"]].rename(
             columns={"Uebung": "Übung", "Gewicht_kg": "kg", "Wiederholungen": "Wdh."})
-        st.dataframe(anzeige, hide_index=True, use_container_width=True)
+        st.dataframe(anzeige, hide_index=True)
 
         if st.button("Letzten Satz löschen"):
             try:
@@ -242,7 +377,7 @@ else:
     with st.form("gewicht_formular"):
         neues_gewicht = st.number_input("Gewicht heute (kg)", min_value=30.0, max_value=300.0,
                                         value=letztes_gewicht, step=0.1, format="%.1f")
-        if st.form_submit_button("Gewicht speichern", type="primary", use_container_width=True):
+        if st.form_submit_button("Gewicht speichern", type="primary"):
             if zeile_speichern(GEWICHT_CSV, {"Datum": heute, "Uhrzeit": datetime.now().strftime("%H:%M"),
                                              "Gewicht_kg": round(float(neues_gewicht), 1)}):
                 st.success("Gewicht gespeichert.")
